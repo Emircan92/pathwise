@@ -1,0 +1,28 @@
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+.vs/
+TestResults/
+
+# Frontend
+**/node_modules/
+**/.next/
+**/out/
+**/coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Local configuration and secrets
+**/.env*
+!**/.env.example
+appsettings.*.local.json
+
+# Tooling and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.log
+.pnpm-debug.log*

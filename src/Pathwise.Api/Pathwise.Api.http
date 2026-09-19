@@ -1,0 +1,6 @@
+@Pathwise.Api_HostAddress = http://localhost:5100
+
+GET {{Pathwise.Api_HostAddress}}/health
+Accept: application/json
+
+###
