@@ -26,3 +26,5 @@ appsettings.*.local.json
 Thumbs.db
 *.log
 .pnpm-debug.log*
+# Pathwise local data
+src/Pathwise.Api/data/

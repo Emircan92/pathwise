@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Pathwise.Api\Pathwise.Api.csproj" />
+    <ProjectReference Include="..\..\src\Pathwise.Infrastructure\Pathwise.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

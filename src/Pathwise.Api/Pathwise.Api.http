@@ -4,3 +4,17 @@ GET {{Pathwise.Api_HostAddress}}/health
 Accept: application/json
 
 ###
+
+GET {{Pathwise.Api_HostAddress}}/api/player
+Accept: application/json
+
+###
+
+GET {{Pathwise.Api_HostAddress}}/api/matches
+Accept: application/json
+
+###
+
+POST {{Pathwise.Api_HostAddress}}/api/matches/fetch
+
+###
