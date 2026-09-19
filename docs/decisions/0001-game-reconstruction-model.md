@@ -1,4 +1,4 @@
-# ADR 0005: Game Reconstruction Model
+# ADR 0001: Game Reconstruction Model
 
 ## Status
 
