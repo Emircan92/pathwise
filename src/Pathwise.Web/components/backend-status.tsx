@@ -46,16 +46,16 @@ export function BackendStatus() {
   }
 
   return (
-    <div className="flex flex-col gap-4 rounded-2xl border bg-card/80 p-5 shadow-sm backdrop-blur sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-4 rounded-xl border bg-card p-5 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
         <span
           aria-hidden="true"
           className={`size-2.5 rounded-full ${
             isChecking
-              ? "animate-pulse bg-amber-500"
+              ? "animate-pulse bg-warning"
               : isAvailable
-                ? "bg-emerald-500"
-                : "bg-red-500"
+                ? "bg-success"
+                : "bg-destructive"
           }`}
         />
         <div>
