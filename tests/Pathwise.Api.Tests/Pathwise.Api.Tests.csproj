@@ -24,4 +24,9 @@
     <ProjectReference Include="..\..\src\Pathwise.Infrastructure\Pathwise.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\..\fixtures\matches\khazix-belveth-loss-001\match.json" Link="Fixtures\match.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\fixtures\matches\khazix-belveth-loss-001\timeline.json" Link="Fixtures\timeline.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

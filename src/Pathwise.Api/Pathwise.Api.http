@@ -18,3 +18,18 @@ Accept: application/json
 POST {{Pathwise.Api_HostAddress}}/api/matches/fetch
 
 ###
+
+GET {{Pathwise.Api_HostAddress}}/api/matches/EUW1_7988789083/reconstruction
+Accept: application/json
+
+###
+
+GET {{Pathwise.Api_HostAddress}}/api/matches/EUW1_7988789083/reconstruction/state?atMs=900000
+Accept: application/json
+
+###
+
+GET {{Pathwise.Api_HostAddress}}/api/matches/EUW1_7988789083/reconstruction/changes?fromMs=900315&toMs=1200393
+Accept: application/json
+
+###

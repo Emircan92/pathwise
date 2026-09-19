@@ -2,7 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Pathwise.Application.Ingestion;
+using Pathwise.Application.Reconstruction;
 using Pathwise.Infrastructure.Persistence;
+using Pathwise.Infrastructure.Reconstruction;
 using Pathwise.Infrastructure.Riot;
 
 namespace Pathwise.Infrastructure;
@@ -24,6 +26,8 @@ public static class DependencyInjection
         }
         services.AddPooledDbContextFactory<PathwiseDbContext>(options => options.UseSqlite(connectionString));
         services.AddSingleton<IMatchStore, EfMatchStore>();
+        services.AddSingleton<RiotReconstructionMapper>();
+        services.AddSingleton<IStoredReconstructionSource, EfStoredReconstructionSource>();
         services.AddHttpClient("Riot");
         services.AddSingleton<IRiotSource>(provider => new RiotApiClient(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient("Riot"),
