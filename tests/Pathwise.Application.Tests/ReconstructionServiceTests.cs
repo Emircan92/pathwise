@@ -1,5 +1,6 @@
 using Pathwise.Application.Ingestion;
 using Pathwise.Application.Reconstruction;
+using Pathwise.Application.ReviewWindows;
 using Pathwise.Domain.Matches;
 using Pathwise.Domain.Reconstruction;
 
@@ -7,6 +8,35 @@ namespace Pathwise.Application.Tests;
 
 public sealed class ReconstructionServiceTests
 {
+    [Fact]
+    public async Task ReviewWindowsLoadOneLocalSourceWithoutApiKeyOrWrites()
+    {
+        var store = new FakeStore(new PlayerView("Player", "EUW", "euw1", "europe", 50, true, [], "local-puuid", DateTimeOffset.UtcNow));
+        var source = new FakeSource();
+        var service = new ReviewWindowService(new ReconstructionService(store, source));
+
+        var result = await service.GetAsync(new("Player", "EUW", "euw1", "europe", 50, ""), "EUW1_1", CancellationToken.None);
+
+        Assert.Equal(1, source.LoadCount);
+        Assert.Equal("local-puuid", source.LastPuuid);
+        Assert.Empty(result.Value.Candidates);
+        Assert.Equal(result.Reconstruction.ReconstructionVersion, result.Value.ReconstructionVersion);
+        Assert.Equal(DateTimeOffset.UnixEpoch, result.Source.MatchRetrievedAtUtc);
+    }
+
+    [Fact]
+    public async Task ReviewWindowsPreserveReconstructionFailures()
+    {
+        var store = new FakeStore(new PlayerView("Player", "EUW", "euw1", "europe", 50, true, [], "local-puuid", DateTimeOffset.UtcNow));
+        var failure = new ReconstructionFailure(ReconstructionFailureKind.InvalidSource, "invalid_source", "Invalid source.");
+        var service = new ReviewWindowService(new ReconstructionService(store, new FakeSource(failure)));
+
+        var exception = await Assert.ThrowsAsync<ReconstructionRequestException>(() =>
+            service.GetAsync(new("Player", "EUW", "euw1", "europe", 50, ""), "EUW1_1", CancellationToken.None));
+
+        Assert.Same(failure, exception.Failure);
+    }
+
     [Fact]
     public async Task ChangesLoadsSourceOnceAndDoesNotRequireApiKey()
     {
@@ -34,7 +64,7 @@ public sealed class ReconstructionServiceTests
         Assert.Equal(0, source.LoadCount);
     }
 
-    private sealed class FakeSource : IStoredReconstructionSource
+    private sealed class FakeSource(ReconstructionFailure? failure = null) : IStoredReconstructionSource
     {
         public int LoadCount { get; private set; }
         public string? LastPuuid { get; private set; }
@@ -43,6 +73,8 @@ public sealed class ReconstructionServiceTests
         {
             LoadCount++;
             LastPuuid = configuredPlayerPuuid;
+            if (failure is not null)
+                return Task.FromResult(StoredReconstructionLoadResult.Failed(failure));
             var participant = new Participant(2, 100, 121, "Khazix", "JUNGLE", false, 0, 0, 0);
             var frames = new[]
             {
