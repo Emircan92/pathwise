@@ -32,15 +32,9 @@ health endpoint remains available at `http://localhost:5100/health`.
 
 ## Configure Riot ingestion
 
-Set the local player identity in `src/Pathwise.Api/appsettings.Development.json`
-or with environment variables:
-
-```powershell
-$env:Riot__Player__GameName = "Your game name"
-$env:Riot__Player__TagLine = "Your tag"
-```
-
-Keep the Riot API key in .NET user secrets:
+The local player identity (`Inner Edge#NUL`) is configured in
+`src/Pathwise.Api/appsettings.Development.json`. Only the Riot API key needs to
+be configured through .NET user secrets:
 
 ```powershell
 dotnet user-secrets set "Riot:ApiKey" "RGAPI-..." --project src/Pathwise.Api
