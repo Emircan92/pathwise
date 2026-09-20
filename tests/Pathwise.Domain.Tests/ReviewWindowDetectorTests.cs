@@ -70,13 +70,13 @@ public sealed class ReviewWindowDetectorTests
     [Theory]
     [InlineData(EnemyResolutionStatus.Missing)]
     [InlineData(EnemyResolutionStatus.Ambiguous)]
-    public void UnresolvedEnemyDisablesMetricsButKeepsDeathsAndObjectives(EnemyResolutionStatus status)
+    public void UnresolvedEnemyDisablesMetricsButKeepsDeathsAndCombat(EnemyResolutionStatus status)
     {
         var events = new ReconstructionEvent[]
         {
             Kill(30_000, 0, victim: 2),
-            new EliteMonsterKillEvent(90_000, new(1, 0), "DRAGON", null, null,
-                new(TeamAttributionKind.Unknown, 0, null, "unknown"), [], null, null)
+            Kill(60_000, 1, killer: 2),
+            Kill(90_000, 2, assists: [2])
         };
         var reconstruction = Create(
             [Frame(0, 0, 0, 0, includeEnemy: false), Frame(1, 180_000, 5_000, 5_000, includeEnemy: false)],
@@ -87,8 +87,19 @@ public sealed class ReviewWindowDetectorTests
 
         Assert.Null(Assert.Single(result.Candidates).RelativeEvidence);
         Assert.Contains(result.Candidates.SelectMany(x => x.Signals), x => x.Kind == ReviewSignalKind.ConfiguredPlayerDeath);
-        Assert.Contains(result.Candidates.SelectMany(x => x.Signals), x => x.Kind == ReviewSignalKind.EliteMonsterKill);
+        Assert.Contains(result.Candidates.SelectMany(x => x.Signals), x => x.Kind == ReviewSignalKind.ConcentratedPlayerCombat);
         Assert.Empty(result.SkippedComparisons);
+    }
+
+    [Fact]
+    public void ObjectiveOnlyInputReturnsNoCandidates()
+    {
+        var objective = Objective(90_000, 0);
+        var result = Detect(Create([Frame(0, 0, 0, 0), Frame(1, 180_000, 0, 0)], [objective]));
+
+        Assert.Empty(result.Candidates);
+        Assert.Empty(result.SuppressedSeeds);
+        Assert.Empty(result.UnselectedDueToCap);
     }
 
     [Fact]
@@ -132,23 +143,27 @@ public sealed class ReviewWindowDetectorTests
     [Fact]
     public void ObjectiveAndNullableShutdownFieldsRemainExactSupportingEvidence()
     {
-        var kill = Kill(50_000, 0, killer: 2, shutdownBounty: null);
+        var kill = Kill(50_000, 0, victim: 2, shutdownBounty: null);
         var objective = new EliteMonsterKillEvent(60_000, new(1, 1), "DRAGON", null, null,
             new(TeamAttributionKind.Unknown, 0, null, "unresolved"), [], null, null);
-        var candidate = Assert.Single(Detect(Create([Frame(0, 0, 0, 0), Frame(1, 120_000, 0, 0)], [kill, objective])).Candidates);
+        var outsideObjective = Objective(200_000, 2);
+        var candidate = Assert.Single(Detect(Create(
+            [Frame(0, 0, 0, 0), Frame(1, 120_000, 0, 0), Frame(2, 240_000, 0, 0)],
+            [kill, objective, outsideObjective])).Candidates);
 
+        Assert.Equal((0L, 110_000L), (candidate.RequestedStartTimestampMs, candidate.RequestedEndTimestampMs));
         Assert.Contains(candidate.SupportingEvents, x => ReferenceEquals(x, objective));
+        Assert.DoesNotContain(candidate.SupportingEvents, x => ReferenceEquals(x, outsideObjective));
         Assert.Null(Assert.IsType<ChampionKillEvent>(candidate.SupportingEvents.Single(x => x.Source == kill.Source)).ShutdownBounty);
         Assert.Equal(TeamAttributionKind.Unknown, Assert.IsType<EliteMonsterKillEvent>(candidate.SupportingEvents.Single(x => x.Source == objective.Source)).TeamAttribution.Kind);
+        Assert.DoesNotContain(candidate.Signals, x => x.Kind == ReviewSignalKind.EliteMonsterKill);
     }
 
     [Fact]
     public void DuplicateBoundaryAndCapAreDeterministicWithoutForcingAQuota()
     {
         var events = Enumerable.Range(0, 7)
-            .Select(index => (ReconstructionEvent)new EliteMonsterKillEvent(
-                100_000 + (index * 200_000), new(index + 1, 0), "DRAGON", null, null,
-                new(TeamAttributionKind.Neutral, 300, null, null), [], null, null))
+            .Select(index => (ReconstructionEvent)Kill(100_000 + (index * 200_000), index, victim: 2))
             .ToArray();
         var frames = Enumerable.Range(0, 24).Select(index => Frame(index, index * 60_000L, 0, 0)).ToArray();
         var result = Detect(Create(frames, events));
@@ -166,9 +181,9 @@ public sealed class ReviewWindowDetectorTests
     {
         var events = new ReconstructionEvent[]
         {
-            Objective(100_000, 0),
-            Objective(200_000, 1),
-            Objective(300_000, 2)
+            Kill(100_000, 0, victim: 2),
+            Kill(200_000, 1, victim: 2),
+            Kill(300_000, 2, victim: 2)
         };
         var reconstruction = Create(
             Enumerable.Range(0, 7).Select(index => Frame(index, index * 60_000L, 0, 0)).ToArray(),
@@ -183,12 +198,12 @@ public sealed class ReviewWindowDetectorTests
     }
 
     [Fact]
-    public void DuplicateOverlapAtExactlyHalfIsSuppressedAndReported()
+    public void DuplicateOverlapAtExactlyThirtyPercentIsSuppressedAndReported()
     {
         var reconstruction = Create(
             [Frame(0, 0, 0, 0), Frame(1, 400_000, 0, 0)],
-            [Kill(100_000, 0, victim: 2), Kill(200_000, 1, victim: 2)]);
-        var options = ReviewWindowOptions.Default with { EventContextPaddingMs = 100_000, MaximumMergedDurationMs = 50_000 };
+            [Kill(100_000, 0, victim: 2), Kill(170_000, 1, victim: 2)]);
+        var options = ReviewWindowOptions.Default with { EventContextPaddingMs = 50_000, MaximumMergedDurationMs = 50_000 };
 
         var result = new ReviewWindowDetector().Detect(reconstruction, options);
 
@@ -197,6 +212,76 @@ public sealed class ReviewWindowDetectorTests
         Assert.Equal(SuppressionReason.DuplicateOverlap, suppressed.Reason);
         Assert.Equal(candidate.SelectionRank, suppressed.SelectedWindowRank);
         Assert.Single(candidate.SuppressedSeeds);
+    }
+
+    [Fact]
+    public void DuplicateOverlapImmediatelyBelowThirtyPercentRemainsEligible()
+    {
+        var reconstruction = Create(
+            [Frame(0, 0, 0, 0), Frame(1, 400_000, 0, 0)],
+            [Kill(100_000, 0, victim: 2), Kill(170_001, 1, victim: 2)]);
+        var options = ReviewWindowOptions.Default with { EventContextPaddingMs = 50_000, MaximumMergedDurationMs = 50_000 };
+
+        var result = new ReviewWindowDetector().Detect(reconstruction, options);
+
+        Assert.Equal(2, result.Candidates.Count);
+        Assert.Empty(result.SuppressedSeeds);
+    }
+
+    [Theory]
+    [InlineData(150_000, 210_000, 2, 0)]
+    [InlineData(150_001, 180_000, 1, 1)]
+    public void MergeDurationBoundaryControlsAbsorptionWithoutChangingOriginalSeeds(
+        long deathTimestamp,
+        long expectedEnd,
+        int expectedSignalCount,
+        int expectedSuppressedCount)
+    {
+        var reconstruction = Create(
+            [
+                Frame(0, 0, 0, 0),
+                Frame(1, 90_000, 0, 0),
+                Frame(2, 180_000, 1_000, 0),
+                FrameAbsolute(3, 210_001, 2_000, 2_000, 1_000, 1_000)
+            ],
+            [Kill(deathTimestamp, 0, victim: 2)]);
+
+        var result = Detect(reconstruction);
+
+        var candidate = Assert.Single(result.Candidates);
+        Assert.Equal((0L, expectedEnd), (candidate.RequestedStartTimestampMs, candidate.RequestedEndTimestampMs));
+        Assert.Equal(expectedSignalCount, candidate.Signals.Count);
+        Assert.Equal(expectedSuppressedCount, result.SuppressedSeeds.Count);
+    }
+
+    [Fact]
+    public void OriginalMetricSeedLongerThanMergeLimitRemainsIntact()
+    {
+        var reconstruction = Create(
+            [
+                Frame(0, 0, 0, 0),
+                Frame(1, 70_000, 0, 0),
+                Frame(2, 140_000, 0, 0),
+                Frame(3, 210_001, 1_000, 0)
+            ],
+            []);
+
+        var candidate = Assert.Single(Detect(reconstruction).Candidates);
+
+        Assert.Equal((0L, 210_001L), (candidate.RequestedStartTimestampMs, candidate.RequestedEndTimestampMs));
+        Assert.Equal(210_001, candidate.RequestedEndTimestampMs - candidate.RequestedStartTimestampMs);
+    }
+
+    [Fact]
+    public void DefaultOptionsAndDetectorVersionExposeVersionTwoPolicy()
+    {
+        Assert.Equal(2, ReviewWindowDetector.CurrentVersion);
+        Assert.Equal(210_000, ReviewWindowOptions.Default.MaximumMergedDurationMs);
+        Assert.Equal(0.3, ReviewWindowOptions.Default.DuplicateOverlapFraction);
+        Assert.Equal(5, ReviewWindowOptions.Default.MaximumSelectedWindows);
+        Assert.Equal(1_000, ReviewWindowOptions.Default.GoldChangeThreshold);
+        Assert.Equal(1_500, ReviewWindowOptions.Default.XpChangeThreshold);
+        Assert.Equal(180_000, ReviewWindowOptions.Default.MetricLookbackMs);
     }
 
     [Fact]

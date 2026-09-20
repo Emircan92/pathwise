@@ -22,19 +22,19 @@ public sealed class RiotReconstructionMapperTests
         Assert.Empty(result.SkippedComparisons);
         Assert.Equal(new[]
         {
-            (180_034L, 479_447L),
-            (840_296L, 1_111_286L),
-            (1_140_367L, 1_380_440L),
-            (1_321_114L, 1_620_500L),
-            (1_584_174L, 1_691_676L)
+            (180_034L, 360_067L),
+            (900_315L, 1_085_356L),
+            (1_200_393L, 1_380_440L),
+            (1_421_654L, 1_620_500L),
+            (1_617_047L, 1_691_676L)
         }, result.Candidates.Select(x => (x.RequestedStartTimestampMs, x.RequestedEndTimestampMs)));
 
         var first = result.Candidates[0];
         var firstGold = Assert.Single(first.Signals, x =>
             x.Kind == ReviewSignalKind.GoldDifferenceChange && x.StartTimestampMs == 180_034 && x.EndTimestampMs == 360_067);
         Assert.Equal((28L, 1_193L, 1_165L), (firstGold.StartValue, firstGold.EndValue, firstGold.SignedChange));
-        Assert.Equal(420_081, first.Changes.EndState.SelectedFrameTimestampMs);
-        Assert.Contains(first.TriggerEventReferences, x => x.FrameIndex == 6 && x.EventIndex >= 0);
+        Assert.Equal(360_067, first.Changes.EndState.SelectedFrameTimestampMs);
+        Assert.Empty(first.TriggerEventReferences);
 
         var fourth = result.Candidates[3];
         var combinedGold = Assert.Single(fourth.Signals, x =>
@@ -43,10 +43,13 @@ public sealed class RiotReconstructionMapperTests
             x.Kind == ReviewSignalKind.XpDifferenceChange && x.StartTimestampMs == 1_440_464 && x.EndTimestampMs == 1_620_500);
         Assert.Equal((4_753L, 3_182L, -1_571L), (combinedGold.StartValue, combinedGold.EndValue, combinedGold.SignedChange));
         Assert.Equal((-1_479L, -4_182L, -2_703L), (combinedXp.StartValue, combinedXp.EndValue, combinedXp.SignedChange));
-        Assert.Equal((4_891L, 3_182L, -1_709L),
+        Assert.Equal((4_742L, 3_182L, -1_560L),
             (fourth.RelativeEvidence!.Start.TotalGold, fourth.RelativeEvidence.End.TotalGold, fourth.RelativeEvidence.Change.TotalGold));
-        Assert.Equal((146L, 165L),
+        Assert.Equal((154L, 165L),
             (fourth.Changes.StartState.ConfiguredPlayer.Observation.JungleCs, fourth.Changes.EndState.ConfiguredPlayer.Observation.JungleCs));
+        Assert.Contains(fourth.SupportingEvents.OfType<EliteMonsterKillEvent>(), x => x.MonsterType == "DRAGON");
+        Assert.Contains(fourth.SupportingEvents.OfType<EliteMonsterKillEvent>(), x => x.MonsterType == "BARON_NASHOR");
+        Assert.DoesNotContain(result.Candidates.SelectMany(x => x.Signals), x => x.Kind == ReviewSignalKind.EliteMonsterKill);
 
         var last = result.Candidates[4];
         Assert.Equal(1_560_471, last.Changes.StartState.SelectedFrameTimestampMs);

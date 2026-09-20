@@ -4,7 +4,7 @@ namespace Pathwise.Domain.ReviewWindows;
 
 public sealed class ReviewWindowDetector
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     public ReviewWindowDetectionResult Detect(GameReconstruction reconstruction, ReviewWindowOptions options)
     {
@@ -98,12 +98,6 @@ public sealed class ReviewWindowDetector
         {
             var signal = EventSignal(ReviewSignalKind.ConfiguredPlayerDeath, death.TimestampMs, death.Source);
             yield return PaddedSeed(reconstruction, options, death.TimestampMs, [signal], ReviewSelectionReason.ConfiguredPlayerDeath);
-        }
-
-        foreach (var objective in reconstruction.Events.OfType<EliteMonsterKillEvent>())
-        {
-            var signal = EventSignal(ReviewSignalKind.EliteMonsterKill, objective.TimestampMs, objective.Source);
-            yield return PaddedSeed(reconstruction, options, objective.TimestampMs, [signal], ReviewSelectionReason.EliteMonsterKill);
         }
 
         foreach (var endingEvent in involvedKills)

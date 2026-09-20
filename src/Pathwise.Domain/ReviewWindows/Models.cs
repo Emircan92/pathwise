@@ -45,8 +45,8 @@ public sealed record ReviewWindowOptions(
         CombatLookbackMs: 60_000,
         CombatMinimumDistinctEvents: 3,
         EventContextPaddingMs: 60_000,
-        MaximumMergedDurationMs: 300_000,
-        DuplicateOverlapFraction: 0.5,
+        MaximumMergedDurationMs: 210_000,
+        DuplicateOverlapFraction: 0.3,
         MaximumSelectedWindows: 5,
         MaximumAdjacentFrameGapMs: 90_000);
 }
