@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Pathwise.Domain.FactualObservations;
 using Pathwise.Domain.Reconstruction;
 using Pathwise.Domain.ReviewWindows;
 using Pathwise.Infrastructure.Reconstruction;
@@ -15,7 +16,8 @@ public sealed class RiotReconstructionMapperTests
     [Fact]
     public void FixtureProducesApprovedReviewWindowsWithTraceableEvidence()
     {
-        var result = new ReviewWindowDetector().Detect(MapFixture(), ReviewWindowOptions.Default);
+        var reconstruction = MapFixture();
+        var result = new ReviewWindowDetector().Detect(reconstruction, ReviewWindowOptions.Default);
 
         Assert.Equal(ReviewWindowDetector.CurrentVersion, result.DetectorVersion);
         Assert.Equal(5, result.Candidates.Count);
@@ -56,6 +58,70 @@ public sealed class RiotReconstructionMapperTests
         Assert.Contains(last.SupportingEvents.OfType<ChampionKillEvent>(), x => x.TimestampMs == 1_644_174 && x.ShutdownBounty == 396);
         Assert.Contains(last.SupportingEvents.OfType<ChampionKillEvent>(), x => x.TimestampMs == 1_649_828 && x.ShutdownBounty == 37);
         Assert.Contains(result.SourceIssues, x => x.Code == "team_attribution_unknown");
+
+        var factual = new FactualObservationGenerator().Generate(reconstruction, result);
+        Assert.Equal(FactualObservationGenerator.CurrentVersion, factual.GeneratorVersion);
+        Assert.Equal(new(500, 750, 10), factual.EffectivePolicy);
+        var observedFourth = factual.Windows[3];
+        Assert.Equal((1_421_654L, 1_620_500L),
+            (observedFourth.Window.RequestedStartTimestampMs, observedFourth.Window.RequestedEndTimestampMs));
+        Assert.Empty(observedFourth.Omissions);
+        Assert.Collection(observedFourth.Observations,
+            observation =>
+            {
+                var gold = Assert.IsType<RelativeGoldObservation>(observation);
+                Assert.Equal((23, 1_380_440L), (gold.Evidence.StartFrame.FrameIndex, gold.Evidence.StartFrame.TimestampMs));
+                Assert.Equal((27, 1_620_500L), (gold.Evidence.EndFrame.FrameIndex, gold.Evidence.EndFrame.TimestampMs));
+                Assert.Equal((14_650L, 16_243L, 1_593L),
+                    (gold.Evidence.ConfiguredPlayer.StartValue, gold.Evidence.ConfiguredPlayer.EndValue, gold.Evidence.ConfiguredPlayer.Change));
+                Assert.Equal((9_908L, 13_061L, 3_153L),
+                    (gold.Evidence.EnemyJungler.StartValue, gold.Evidence.EnemyJungler.EndValue, gold.Evidence.EnemyJungler.Change));
+                Assert.Equal((4_742L, 3_182L, -1_560L),
+                    (gold.Evidence.RelativeStart, gold.Evidence.RelativeEnd, gold.Evidence.SignedChange));
+            },
+            observation =>
+            {
+                var xp = Assert.IsType<RelativeXpObservation>(observation);
+                Assert.Equal((12_401L, 13_501L, 1_100L),
+                    (xp.Evidence.ConfiguredPlayer.StartValue, xp.Evidence.ConfiguredPlayer.EndValue, xp.Evidence.ConfiguredPlayer.Change));
+                Assert.Equal((13_257L, 17_683L, 4_426L),
+                    (xp.Evidence.EnemyJungler.StartValue, xp.Evidence.EnemyJungler.EndValue, xp.Evidence.EnemyJungler.Change));
+                Assert.Equal((-856L, -4_182L, -3_326L),
+                    (xp.Evidence.RelativeStart, xp.Evidence.RelativeEnd, xp.Evidence.SignedChange));
+            },
+            observation =>
+            {
+                var jungleCs = Assert.IsType<RelativeJungleCsObservation>(observation);
+                Assert.Equal((154L, 165L, 11L),
+                    (jungleCs.Evidence.ConfiguredPlayer.StartValue, jungleCs.Evidence.ConfiguredPlayer.EndValue, jungleCs.Evidence.ConfiguredPlayer.Change));
+                Assert.Equal((158L, 190L, 32L),
+                    (jungleCs.Evidence.EnemyJungler.StartValue, jungleCs.Evidence.EnemyJungler.EndValue, jungleCs.Evidence.EnemyJungler.Change));
+                Assert.Equal((-4L, -25L, -21L),
+                    (jungleCs.Evidence.RelativeStart, jungleCs.Evidence.RelativeEnd, jungleCs.Evidence.SignedChange));
+            },
+            observation =>
+            {
+                var combat = Assert.IsType<ConfiguredPlayerCombatObservation>(observation);
+                Assert.Equal((0, 2, 1, 3),
+                    (combat.KillCount, combat.DeathCount, combat.AssistCount, combat.DistinctEventCount));
+                Assert.Equal(new[] { (25, 22), (27, 0), (27, 4) },
+                    combat.Events.Select(@event => (@event.Source.FrameIndex, @event.Source.EventIndex)));
+            },
+            observation =>
+            {
+                var objectives = Assert.IsType<EliteObjectiveContextObservation>(observation);
+                Assert.Equal(new[] { (24, 30), (26, 7) },
+                    objectives.Events.Select(@event => (@event.Source.FrameIndex, @event.Source.EventIndex)));
+                Assert.Equal(new[] { "DRAGON", "BARON_NASHOR" }, objectives.Events.Select(@event => @event.MonsterType));
+                Assert.Equal(new[] { "HEXTECH_DRAGON", null }, objectives.Events.Select(@event => @event.MonsterSubType));
+                Assert.All(objectives.Events, @event =>
+                {
+                    Assert.Equal(7, @event.KillerParticipantId);
+                    Assert.Equal(200, @event.TeamAttribution.ResolvedTeamId);
+                });
+            });
+        Assert.DoesNotContain(observedFourth.Observations, observation =>
+            observation.Key.Kind.ToString().Contains("Level", StringComparison.Ordinal));
     }
 
     [Fact]
