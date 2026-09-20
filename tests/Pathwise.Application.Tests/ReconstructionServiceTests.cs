@@ -2,6 +2,7 @@ using Pathwise.Application.Ingestion;
 using Pathwise.Application.Reconstruction;
 using Pathwise.Application.ReviewWindows;
 using Pathwise.Domain.FactualObservations;
+using Pathwise.Domain.Knowledge;
 using Pathwise.Domain.Matches;
 using Pathwise.Domain.Reconstruction;
 using Pathwise.Domain.ReviewWindows;
@@ -64,6 +65,9 @@ public sealed class ReconstructionServiceTests
         Assert.Equal(FactualObservationGenerator.CurrentVersion, result.Value.FactualObservations.GeneratorVersion);
         var factualWindow = Assert.Single(result.Value.FactualObservations.Windows);
         Assert.IsType<RelativeGoldObservation>(Assert.Single(factualWindow.Observations));
+        Assert.Equal(KnowledgeCoverage.UnknownPatch, result.Value.KnowledgeAnnotations.Coverage);
+        Assert.Equal("1.0", result.Value.KnowledgeAnnotations.PatchResolution.RawGameVersion);
+        Assert.Empty(result.Value.KnowledgeAnnotations.Annotations);
     }
 
     [Fact]

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Pathwise.Application.Knowledge;
 using Pathwise.Domain.FactualObservations;
+using Pathwise.Domain.Knowledge;
 using Pathwise.Domain.Reconstruction;
 using Pathwise.Domain.ReviewWindows;
 using Pathwise.Infrastructure.Reconstruction;
@@ -122,6 +124,36 @@ public sealed class RiotReconstructionMapperTests
             });
         Assert.DoesNotContain(observedFourth.Observations, observation =>
             observation.Key.Kind.ToString().Contains("Level", StringComparison.Ordinal));
+
+        var resolution = new PublicPatchResolver().Resolve(reconstruction.Patch);
+        var knowledge = new KnowledgeAnnotationGenerator().Generate(
+            reconstruction,
+            factual,
+            resolution,
+            KnowledgePacks.For(resolution.Patch));
+        Assert.Equal("16.18.817.5716", resolution.RawGameVersion);
+        Assert.Equal(new PublicPatch(26, 18), resolution.Patch);
+        Assert.Equal(KnowledgeCoverage.Available, knowledge.Coverage);
+        Assert.Equal("summoners-rift-objective-initial-spawns", knowledge.Pack!.Id);
+        Assert.Equal(1, knowledge.Pack.Version);
+        Assert.Contains("26.18", knowledge.Pack.SourceReviewNote, StringComparison.Ordinal);
+        Assert.All(knowledge.Pack.Facts, fact => Assert.All(fact.Sources, source =>
+            Assert.Equal("www.leagueoflegends.com", source.Url.Host)));
+        var fourthAnnotations = knowledge.Annotations
+            .Where(annotation => annotation.Target.Window == observedFourth.Window)
+            .ToArray();
+        Assert.Collection(fourthAnnotations,
+            annotation => Assert.Equal(
+                ("baron-nashor.initial-spawn", KnowledgeAnnotationKind.RecordedObjectiveContext, 1_505_113L, 26, 7),
+                (annotation.FactId, annotation.Kind, annotation.RecordedKillTimestampMs, annotation.Target.Event!.FrameIndex, annotation.Target.Event.EventIndex)),
+            annotation => Assert.Equal(
+                ("elemental-dragon.initial-spawn", KnowledgeAnnotationKind.RecordedObjectiveContext, 1_427_715L, 24, 30),
+                (annotation.FactId, annotation.Kind, annotation.RecordedKillTimestampMs, annotation.Target.Event!.FrameIndex, annotation.Target.Event.EventIndex)));
+        Assert.All(fourthAnnotations, annotation =>
+        {
+            Assert.Equal(observedFourth.Window, annotation.Target.Window);
+            Assert.Equal(FactualObservationKind.EliteObjectiveContext, annotation.Target.Observation!.Kind);
+        });
     }
 
     [Fact]
