@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted.
+Superseded in part by ADR 0003.
+
+ADR 0003 replaces the objective-trigger rule, maximum merged duration,
+duplicate-overlap threshold, detector version, and regression expectations.
+All other principles remain applicable.
 
 ## Context
 
