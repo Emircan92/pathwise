@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using Pathwise.Api;
 using Pathwise.Application.Ingestion;
 using Pathwise.Application.Reconstruction;
+using Pathwise.Application.ReviewWindows;
 using Pathwise.Domain.Reconstruction;
 using Pathwise.Infrastructure;
 using Pathwise.Infrastructure.Riot;
@@ -16,6 +17,8 @@ builder.Services.Configure<RiotOptions>(builder.Configuration.GetSection(RiotOpt
 builder.Services.AddPathwiseInfrastructure(builder.Configuration, builder.Environment.ContentRootPath);
 builder.Services.AddScoped<MatchIngestionService>();
 builder.Services.AddScoped<ReconstructionService>();
+builder.Services.AddScoped<ReviewWindowService>();
+builder.Services.AddScoped<MatchReviewService>();
 
 var app = builder.Build();
 app.UseExceptionHandler();
@@ -62,6 +65,16 @@ api.MapGet("/matches/{matchId}/reconstruction/changes", async (string matchId, l
     try { return Results.Ok(ReconstructionApiMapper.Changes(await service.GetChangesAsync(ToSnapshot(options.Value), matchId, fromMs.Value, toMs.Value, ct))); }
     catch (ReconstructionRequestException ex) { return ReconstructionProblem(ex.Failure); }
     catch (ReconstructionQueryException ex) { return RangeProblem(ex); }
+});
+
+api.MapGet("/matches/{matchId}/review", async (string matchId, MatchReviewService service, IOptions<RiotOptions> options, CancellationToken ct) =>
+{
+    try
+    {
+        var review = await service.GetAsync(ToSnapshot(options.Value), matchId, ct);
+        return Results.Ok(MatchReviewApiMapper.Map(review));
+    }
+    catch (ReconstructionRequestException ex) { return ReconstructionProblem(ex.Failure); }
 });
 
 app.Run();

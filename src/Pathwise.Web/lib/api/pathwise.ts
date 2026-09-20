@@ -39,6 +39,53 @@ export type FetchResult = {
   retryAfterUtc: string | null;
 };
 
+export type MetricKind = "relativeGoldMovement" | "relativeXpMovement" | "relativeJungleCsMovement";
+export type SelectionReason = "goldAndXpChange" | "goldChange" | "xpChange" | "configuredPlayerDeath" | "concentratedPlayerCombat" | "eliteMonsterKill";
+export type SignalKind = "goldDifferenceChange" | "xpDifferenceChange" | "configuredPlayerDeath" | "concentratedPlayerCombat" | "eliteMonsterKill";
+export type SourceFrame = { frameIndex: number; timestampMs: number };
+export type SourceEvent = { frameIndex: number; eventIndex: number };
+export type SourceDataIssue = { code: string; sourceReference: string; explanation: string; handlingOutcome: string };
+export type TeamAttribution = { kind: "KnownTeam" | "Neutral" | "Unknown"; suppliedTeamId: number | null; resolvedTeamId: number | null; diagnosticReason: string | null };
+export type MetricValues = {
+  relativeStart: number;
+  relativeEnd: number;
+  signedChange: number;
+  configuredPlayer: { startValue: number; endValue: number };
+  enemyJungler: { startValue: number; endValue: number };
+};
+export type CombatEvent = { source: SourceEvent; timestampMs: number; killerParticipantId: number | null; victimParticipantId: number; assistingParticipantIds: number[] };
+export type ObjectiveEvent = { source: SourceEvent; timestampMs: number; monsterType: string | null; monsterSubType: string | null; killerParticipantId: number | null; assistingParticipantIds: number[]; teamAttribution: TeamAttribution };
+export type Observation =
+  | ({ kind: "relativeGoldMovement" | "relativeXpMovement" | "relativeJungleCsMovement" } & MetricValues)
+  | { kind: "configuredPlayerCombat"; kills: number; deaths: number; assists: number; distinctEventCount: number; events: CombatEvent[] }
+  | { kind: "eliteObjectiveContext"; events: ObjectiveEvent[] };
+export type KnowledgeFact = { id: string; objective: "elementalDragon" | "baronNashor"; initialSpawnTimestampMs: number; sources: { title: string; url: string }[] };
+export type KnowledgeAnnotation =
+  | { kind: "nearInitialSpawn"; fact: KnowledgeFact; target: { observationKind: null; event: null }; recordedKillTimestampMs: null }
+  | { kind: "recordedObjectiveContext"; fact: KnowledgeFact; target: { observationKind: "eliteObjectiveContext"; event: SourceEvent }; recordedKillTimestampMs: number };
+export type ReviewWindow = {
+  requestedStartTimestampMs: number;
+  requestedEndTimestampMs: number;
+  startFrame: SourceFrame;
+  endFrame: SourceFrame;
+  selectionRank: number;
+  primarySelectionReason: SelectionReason;
+  signalKinds: SignalKind[];
+  absorbedSignalKinds: SignalKind[];
+  observations: Observation[];
+  metricOmissions: { kind: MetricKind; reason: "counterRegression" }[];
+  knowledgeAnnotations: KnowledgeAnnotation[];
+};
+export type MatchReview = {
+  matchId: string;
+  configuredParticipantId: number;
+  enemyResolution: { status: "resolved" | "missing" | "ambiguous"; participantId: number | null };
+  versions: { reconstruction: number; detector: number; factualObservations: number; knowledgeAnnotations: number };
+  knowledge: { publicPatch: string | null; coverage: "available" | "unknownPatch" | "noPackForPatch" | "unsupportedMatch" };
+  sourceDataIssues: SourceDataIssue[];
+  windows: ReviewWindow[];
+};
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5100";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -53,4 +100,5 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const getPlayer = () => request<Player>("/api/player");
 export const getMatches = () => request<MatchList>("/api/matches?limit=50&offset=0");
 export const getMatch = (matchId: string) => request<Match>(`/api/matches/${encodeURIComponent(matchId)}`);
+export const getMatchReview = (matchId: string, signal?: AbortSignal) => request<MatchReview>(`/api/matches/${encodeURIComponent(matchId)}/review`, { signal });
 export const fetchLatestMatches = () => request<FetchResult>("/api/matches/fetch", { method: "POST" });

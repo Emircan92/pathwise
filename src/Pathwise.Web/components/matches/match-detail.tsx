@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getMatch, type Match } from "@/lib/api/pathwise";
+import { MatchReviewSection } from "@/components/matches/match-review-section";
 
 export function MatchDetail({ matchId }: { matchId: string }) {
   const [match, setMatch] = useState<Match | null>(null);
@@ -30,8 +31,8 @@ export function MatchDetail({ matchId }: { matchId: string }) {
       <dl className="mt-8 grid gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-2 lg:grid-cols-4">
         {[ ["Duration", duration], ["Role", match.teamPosition || "Unknown"], ["Queue", match.queueId === 420 ? "Ranked Solo/Duo" : match.queueId ?? "Unknown"], ["Support", match.supportStatus === "jungle" ? "Jungle · Supported" : "Unsupported"] ].map(([label, value]) => <div key={label} className="bg-card p-5"><dt className="text-xs uppercase tracking-wider text-muted-foreground">{label}</dt><dd className="mt-2 font-medium">{value}</dd></div>)}
       </dl>
+      <MatchReviewSection key={matchId} matchId={matchId} />
       <section className="mt-8 rounded-xl border bg-card p-6"><h2 className="font-semibold">Source data</h2><div className="mt-4 grid gap-3 sm:grid-cols-2"><SourceStatus label="Match payload" available={match.matchPayloadAvailable} /><SourceStatus label="Timeline payload" available={match.timelinePayloadAvailable} /></div>{match.failures.length ? <div className="mt-5 space-y-2">{match.failures.map((failure) => <p key={`${failure.resource}-${failure.code}`} className="rounded-lg bg-warning/10 p-3 text-sm text-warning">{failure.resource}: {failure.message}</p>)}</div> : null}</section>
-      <section className="mt-6 rounded-xl border border-dashed p-6"><p className="font-medium">Factual match view</p><p className="mt-2 text-sm leading-6 text-muted-foreground">Analysis and recommendations are not available in this slice. The retained match and timeline data will support that work later.</p></section>
       <p className="mt-6 font-mono text-xs text-muted-foreground">{match.matchId}</p>
     </DetailShell>
   );
