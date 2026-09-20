@@ -29,19 +29,44 @@ describe("match review presentation", () => {
     expect(screen.getByText("−4 → −25 (−21)")).toBeInTheDocument();
     expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "Combat: 0 kills / 2 deaths / 1 assist")).toBeInTheDocument();
     expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "Objectives: Hextech Dragon, Baron Nashor")).toBeInTheDocument();
-    expect(screen.getAllByText("Elemental Dragon initial spawn:")).toHaveLength(2);
-    expect(screen.getByText("Associated recorded kill: Hextech Dragon at 23:47")).toBeInTheDocument();
-    expect(screen.getByText("Associated recorded kill: Baron Nashor at 25:05")).toBeInTheDocument();
-    expect(screen.getByText("Initial-spawn context")).toBeInTheDocument();
+    expect(screen.getByText("Selected for relative gold and XP change")).toBeInTheDocument();
+    expect(screen.getByText("Relative XP:")).toBeInTheDocument();
+    expect(screen.getByText("Associated recorded kill: Hextech Dragon at 23:47")).toHaveClass("text-foreground/80");
+    expect(screen.getByText("Associated recorded kill: Baron Nashor at 25:05")).toHaveClass("text-foreground/80");
+    expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === "Initial-spawn context · Elemental Dragon initial spawn: 5:00")).toHaveClass("text-xs");
+    expect(screen.getByText("Metric source frames · 23:00–27:00")).toHaveClass("text-[11px]");
 
+    const evidence = within(cards[1]).getByText("Evidence and sources").closest("details");
+    expect(evidence).not.toHaveAttribute("open");
     fireEvent.click(within(cards[1]).getByText("Evidence and sources"));
+    expect(evidence).toHaveAttribute("open");
     expect(screen.getByText("Review bounds: 23:41.654–27:00.500")).toBeInTheDocument();
     expect(screen.getByText("Metric frames: 23:00.440 (frame 23)–27:00.500 (frame 27)")).toBeInTheDocument();
+    expect(screen.getByText("Signal types: Gold difference change, XP difference change")).toBeInTheDocument();
     expect(within(cards[1]).getByText("Events after the start, through the end.")).toBeInTheDocument();
     expect(within(cards[1]).getByRole("link", { name: "Riot objectives" })).toHaveAttribute("href", "https://example.com/objectives");
 
-    const visibleText = document.body.textContent?.toLowerCase() ?? "";
+    const renderedText = document.body.textContent ?? "";
+    expect(renderedText).not.toMatch(/\bxp\b/);
+    const visibleText = renderedText.toLowerCase();
     for (const phrase of ["lost your lead", "fell behind badly", "bad fight", "mistake", "good decision", "should have reset", "should have contested", "missed opportunity"]) expect(visibleText).not.toContain(phrase);
+  });
+
+  it.each([
+    [0, 1, 0, "Combat: 0 kills / 1 death / 0 assists"],
+    [1, 2, 1, "Combat: 1 kill / 2 deaths / 1 assist"],
+    [1, 1, 1, "Combat: 1 kill / 1 death / 1 assist"],
+  ])("pluralizes combat counts for %i/%i/%i", (kills, deaths, assists, expected) => {
+    const review = representativeReview();
+    review.windows = [{
+      ...review.windows[0],
+      observations: [{ kind: "configuredPlayerCombat", kills, deaths, assists, distinctEventCount: kills + deaths + assists, events: [] }],
+      knowledgeAnnotations: [],
+    }];
+
+    render(<MatchReviewContent review={review} />);
+
+    expect(screen.getByText((_, element) => element?.tagName === "P" && element.textContent === expected)).toBeInTheDocument();
   });
 
   it("formats match-relative timestamps without wrapping after an hour", () => {

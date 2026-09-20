@@ -11,22 +11,31 @@ import {
   type Observation,
   type ReviewWindow,
   type SelectionReason,
+  type SignalKind,
   type SourceEvent,
 } from "@/lib/api/pathwise";
 
 const selectionLabels: Record<SelectionReason, string> = {
-  goldAndXpChange: "Relative gold and XP change",
-  goldChange: "Relative gold change",
-  xpChange: "Relative XP change",
-  configuredPlayerDeath: "Recorded player death",
-  concentratedPlayerCombat: "Concentrated combat events",
-  eliteMonsterKill: "Recorded elite objective",
+  goldAndXpChange: "relative gold and XP change",
+  goldChange: "relative gold change",
+  xpChange: "relative XP change",
+  configuredPlayerDeath: "recorded player death",
+  concentratedPlayerCombat: "concentrated combat events",
+  eliteMonsterKill: "recorded elite objective",
 };
 
 const metricLabels: Record<MetricKind, string> = {
   relativeGoldMovement: "Relative gold",
   relativeXpMovement: "Relative XP",
   relativeJungleCsMovement: "Relative Jungle CS",
+};
+
+const signalLabels: Record<SignalKind, string> = {
+  goldDifferenceChange: "Gold difference change",
+  xpDifferenceChange: "XP difference change",
+  configuredPlayerDeath: "Configured player death",
+  concentratedPlayerCombat: "Concentrated player combat",
+  eliteMonsterKill: "Elite monster kill",
 };
 
 export function MatchReviewSection({ matchId }: { matchId: string }) {
@@ -109,20 +118,20 @@ function ReviewWindowCard({ window, patch, knowledgeAvailable }: { window: Revie
     <article className="rounded-xl border bg-card p-5 sm:p-6">
       <header>
         <h3 className="text-lg font-semibold tabular-nums">{formatMatchTime(window.requestedStartTimestampMs)}–{formatMatchTime(window.requestedEndTimestampMs)}</h3>
-        <p className="mt-1 text-sm text-muted-foreground">Selected for {selectionLabels[window.primarySelectionReason].toLowerCase()}</p>
+        <p className="mt-1 text-sm text-muted-foreground">Selected for {selectionLabels[window.primarySelectionReason]}</p>
       </header>
 
       <div className="mt-6 space-y-3">
         <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Observed changes</h4>
         {window.observations.length === 0 ? <p className="text-sm text-muted-foreground">No factual observations were emitted for this period.</p> : null}
         {metrics.map((observation) => <MetricLine key={observation.kind} observation={observation} />)}
-        {hasMetricEvidence ? <p className="pt-1 text-xs tabular-nums text-muted-foreground">Metric source frames: {formatMatchTime(window.startFrame.timestampMs)}–{formatMatchTime(window.endFrame.timestampMs)}</p> : null}
-        {combat?.kind === "configuredPlayerCombat" ? <p className="text-sm"><span className="font-medium">Combat:</span> {combat.kills} kills / {combat.deaths} deaths / {combat.assists} assist{combat.assists === 1 ? "" : "s"}</p> : null}
+        {combat?.kind === "configuredPlayerCombat" ? <p className="text-sm"><span className="font-medium">Combat:</span> {formatCount(combat.kills, "kill")} / {formatCount(combat.deaths, "death")} / {formatCount(combat.assists, "assist")}</p> : null}
         {objectives?.kind === "eliteObjectiveContext" ? <p className="text-sm"><span className="font-medium">Objectives:</span> {objectives.events.map(objectiveName).join(", ")}</p> : null}
         {window.metricOmissions.map((omission) => <p key={omission.kind} className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">{metricLabels[omission.kind]} was omitted because the source counters were inconsistent.</p>)}
       </div>
 
       {knowledgeAvailable ? <KnowledgeContext annotations={window.knowledgeAnnotations} objectives={objectives?.kind === "eliteObjectiveContext" ? objectives.events : []} patch={patch} /> : null}
+      {hasMetricEvidence ? <p className="mt-5 text-[11px] tabular-nums text-muted-foreground/80">Metric source frames · {formatMatchTime(window.startFrame.timestampMs)}–{formatMatchTime(window.endFrame.timestampMs)}</p> : null}
       <EvidenceDisclosure window={window} metrics={metrics} />
     </article>
   );
@@ -134,14 +143,17 @@ function MetricLine({ observation }: { observation: Extract<Observation, { kind:
 
 function KnowledgeContext({ annotations, objectives, patch }: { annotations: KnowledgeAnnotation[]; objectives: ObjectiveEvent[]; patch: string | null }) {
   return (
-    <div className="mt-6 border-t pt-5">
-      <h4 className="text-sm font-medium">Game context{patch ? ` · Patch ${patch}` : ""}</h4>
-      {annotations.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No game-context annotations apply to this period.</p> : (
-        <div className="mt-3 space-y-4">{annotations.map((annotation, index) => {
+    <div className="mt-5 border-t border-border/60 pt-4 text-muted-foreground">
+      <h4 className="text-[11px] font-medium uppercase tracking-wider">Game context{patch ? ` · Patch ${patch}` : ""}</h4>
+      {annotations.length === 0 ? <p className="mt-2 text-xs">No game-context annotations apply to this period.</p> : (
+        <div className="mt-2 space-y-3">{annotations.map((annotation, index) => {
           const recordedEvent = annotation.kind === "recordedObjectiveContext" ? objectives.find((event) => sameSource(event.source, annotation.target.event)) : undefined;
-          return <div key={`${annotation.kind}-${annotation.fact.id}-${index}`} className="text-sm">
-            <p><span className="font-medium">{knowledgeObjectiveName(annotation.fact.objective)} initial spawn:</span> <span className="tabular-nums">{formatMatchTime(annotation.fact.initialSpawnTimestampMs)}</span></p>
-            {annotation.kind === "nearInitialSpawn" ? <p className="mt-1 text-muted-foreground">Initial-spawn context</p> : <p className="mt-1 text-muted-foreground">Associated recorded kill: {recordedEvent ? objectiveName(recordedEvent) : knowledgeObjectiveName(annotation.fact.objective)} at {formatMatchTime(annotation.recordedKillTimestampMs)}</p>}
+          if (annotation.kind === "nearInitialSpawn") {
+            return <p key={`${annotation.kind}-${annotation.fact.id}-${index}`} className="text-xs leading-5">Initial-spawn context · {knowledgeObjectiveName(annotation.fact.objective)} initial spawn: <span className="tabular-nums">{formatMatchTime(annotation.fact.initialSpawnTimestampMs)}</span></p>;
+          }
+          return <div key={`${annotation.kind}-${annotation.fact.id}-${index}`} className="text-xs">
+            <p className="font-medium text-foreground/80">Associated recorded kill: {recordedEvent ? objectiveName(recordedEvent) : knowledgeObjectiveName(annotation.fact.objective)} at {formatMatchTime(annotation.recordedKillTimestampMs)}</p>
+            <p className="mt-1">{knowledgeObjectiveName(annotation.fact.objective)} initial spawn: <span className="tabular-nums">{formatMatchTime(annotation.fact.initialSpawnTimestampMs)}</span></p>
           </div>;
         })}</div>
       )}
@@ -158,7 +170,7 @@ function EvidenceDisclosure({ window, metrics }: { window: ReviewWindow; metrics
       <summary className="cursor-pointer font-medium">Evidence and sources</summary>
       <div className="mt-4 space-y-4 text-muted-foreground">
         <div className="space-y-1 tabular-nums"><p>Review bounds: {formatMatchTime(window.requestedStartTimestampMs, true)}–{formatMatchTime(window.requestedEndTimestampMs, true)}</p>{metrics.length > 0 || window.metricOmissions.length > 0 ? <p>Metric frames: {formatMatchTime(window.startFrame.timestampMs, true)} (frame {window.startFrame.frameIndex})–{formatMatchTime(window.endFrame.timestampMs, true)} (frame {window.endFrame.frameIndex})</p> : null}<p>Events after the start, through the end.</p></div>
-        <div><p className="font-medium text-foreground">Detector selection information</p><p>Selection rank: {window.selectionRank}</p><p>Signal types: {window.signalKinds.length ? window.signalKinds.join(", ") : "None"}</p><p>Absorbed signal types: {window.absorbedSignalKinds.length ? window.absorbedSignalKinds.join(", ") : "None"}</p></div>
+        <div><p className="font-medium text-foreground">Detector selection information</p><p>Selection rank: {window.selectionRank}</p><p>Signal types: {window.signalKinds.length ? window.signalKinds.map((kind) => signalLabels[kind]).join(", ") : "None"}</p><p>Absorbed signal types: {window.absorbedSignalKinds.length ? window.absorbedSignalKinds.map((kind) => signalLabels[kind]).join(", ") : "None"}</p></div>
         {metrics.map((metric) => <div key={metric.kind}><p className="font-medium text-foreground">{metricLabels[metric.kind]} absolute endpoints</p><p>Configured player: {formatNumber(metric.configuredPlayer.startValue)} → {formatNumber(metric.configuredPlayer.endValue)}</p><p>Enemy jungler: {formatNumber(metric.enemyJungler.startValue)} → {formatNumber(metric.enemyJungler.endValue)}</p></div>)}
         {combat?.kind === "configuredPlayerCombat" && combat.events.length ? <div><p className="font-medium text-foreground">Combat event references</p>{combat.events.map((event) => <p key={`${event.source.frameIndex}-${event.source.eventIndex}`}>{formatMatchTime(event.timestampMs, true)} · frame {event.source.frameIndex}, event {event.source.eventIndex}</p>)}</div> : null}
         {objectives?.kind === "eliteObjectiveContext" && objectives.events.length ? <div><p className="font-medium text-foreground">Objective event references</p>{objectives.events.map((event) => <p key={`${event.source.frameIndex}-${event.source.eventIndex}`}>{objectiveName(event)} · {formatMatchTime(event.timestampMs, true)} · frame {event.source.frameIndex}, event {event.source.eventIndex} · attribution {event.teamAttribution.kind}</p>)}</div> : null}
@@ -182,6 +194,7 @@ export function formatMatchTime(timestampMs: number, exact = false) {
 }
 export function formatSigned(value: number) { return value > 0 ? `+${formatNumber(value)}` : value < 0 ? `−${formatNumber(Math.abs(value))}` : "0"; }
 function formatNumber(value: number) { return new Intl.NumberFormat("en-US").format(value); }
+function formatCount(value: number, singular: string) { return `${value} ${singular}${value === 1 ? "" : "s"}`; }
 function knowledgeObjectiveName(objective: "elementalDragon" | "baronNashor") { return objective === "elementalDragon" ? "Elemental Dragon" : "Baron Nashor"; }
 export function objectiveName(event: ObjectiveEvent) {
   if (event.monsterType === "BARON_NASHOR") return "Baron Nashor";
