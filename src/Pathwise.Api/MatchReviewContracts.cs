@@ -10,7 +10,9 @@ namespace Pathwise.Api;
 
 public sealed record MatchReviewResponse(
     string MatchId,
+    int MapId,
     int ConfiguredParticipantId,
+    IReadOnlyList<ReviewParticipantDto> Participants,
     EnemyResolutionDto EnemyResolution,
     MatchReviewVersionsDto Versions,
     MatchReviewKnowledgeDto Knowledge,
@@ -25,6 +27,8 @@ public sealed record MatchReviewVersionsDto(
 
 public sealed record MatchReviewKnowledgeDto(string? PublicPatch, string Coverage);
 public sealed record SourceFrameDto(int FrameIndex, long TimestampMs);
+public sealed record ReviewParticipantDto(int ParticipantId, string ChampionName, int TeamId);
+public sealed record ReviewPositionSampleDto(int FrameIndex, long TimestampMs, PositionDto? ConfiguredPlayerPosition, PositionDto? EnemyJunglerPosition);
 
 public sealed record ReviewWindowDto(
     long RequestedStartTimestampMs,
@@ -37,7 +41,8 @@ public sealed record ReviewWindowDto(
     IReadOnlyList<string> AbsorbedSignalKinds,
     IReadOnlyList<ObservationDto> Observations,
     IReadOnlyList<MetricOmissionDto> MetricOmissions,
-    IReadOnlyList<KnowledgeAnnotationDto> KnowledgeAnnotations);
+    IReadOnlyList<KnowledgeAnnotationDto> KnowledgeAnnotations,
+    IReadOnlyList<ReviewPositionSampleDto> PositionSamples);
 
 public sealed record MetricOmissionDto(string Kind, string Reason);
 public sealed record MetricEndpointDto(long StartValue, long EndValue);
@@ -95,7 +100,8 @@ public sealed record CombatEventDto(
     long TimestampMs,
     int? KillerParticipantId,
     int VictimParticipantId,
-    IReadOnlyList<int> AssistingParticipantIds);
+    IReadOnlyList<int> AssistingParticipantIds,
+    PositionDto? Position);
 
 public sealed record ObjectiveEventDto(
     SourceEventReferenceDto Source,
@@ -104,7 +110,8 @@ public sealed record ObjectiveEventDto(
     string? MonsterSubType,
     int? KillerParticipantId,
     IReadOnlyList<int> AssistingParticipantIds,
-    TeamAttributionDto TeamAttribution);
+    TeamAttributionDto TeamAttribution,
+    PositionDto? Position);
 
 public sealed record KnowledgeSourceDto(string Title, string Url);
 public sealed record KnowledgeFactDto(
@@ -148,18 +155,23 @@ public static class MatchReviewApiMapper
 
         var windows = review.WindowDetection.Candidates.Select(candidate =>
         {
-            var key = WindowKey(result.Reconstruction, review.WindowDetection, candidate);
+            var key = ReviewPositionSelector.KeyFor(result.Reconstruction, review.WindowDetection, candidate);
             if (!observationsByWindow.TryGetValue(key, out var factual))
                 throw new InvalidOperationException("A selected review window has no matching factual-observation result.");
 
             annotationsByWindow.TryGetValue(key, out var annotations);
-            return MapWindow(candidate, factual, annotations ?? [], factsById);
+            if (!review.PositionSamplesByWindow.TryGetValue(key, out var positionSamples))
+                throw new InvalidOperationException("A selected review window has no matching position samples.");
+            return MapWindow(candidate, factual, annotations ?? [], factsById, positionSamples);
         }).ToArray();
 
         var patch = review.KnowledgeAnnotations.PatchResolution.Patch;
         return new(
             result.Reconstruction.MatchId,
+            result.Reconstruction.MapId,
             result.Reconstruction.ConfiguredParticipantId,
+            result.Reconstruction.Participants.OrderBy(participant => participant.ParticipantId)
+                .Select(participant => new ReviewParticipantDto(participant.ParticipantId, participant.ChampionName, participant.TeamId)).ToArray(),
             Enemy(result.Reconstruction.EnemyResolution),
             new(
                 result.Reconstruction.ReconstructionVersion,
@@ -175,7 +187,8 @@ public static class MatchReviewApiMapper
         ReviewWindowCandidate candidate,
         WindowFactualObservations factual,
         IReadOnlyList<KnowledgeAnnotation> annotations,
-        IReadOnlyDictionary<string, ObjectiveInitialSpawnFact> factsById) => new(
+        IReadOnlyDictionary<string, ObjectiveInitialSpawnFact> factsById,
+        IReadOnlyList<ReviewPositionSample> positionSamples) => new(
             candidate.RequestedStartTimestampMs,
             candidate.RequestedEndTimestampMs,
             Frame(candidate.Changes.StartState),
@@ -186,7 +199,9 @@ public static class MatchReviewApiMapper
             SignalKinds(candidate.AbsorbedSignals),
             factual.Observations.Select(Observation).ToArray(),
             factual.Omissions.Select(omission => new MetricOmissionDto(Camel(omission.Kind), "counterRegression")).ToArray(),
-            annotations.Select(annotation => Annotation(annotation, factsById)).ToArray());
+            annotations.Select(annotation => Annotation(annotation, factsById)).ToArray(),
+            positionSamples.Select(sample => new ReviewPositionSampleDto(sample.FrameIndex, sample.TimestampMs,
+                Position(sample.ConfiguredPlayerPosition), Position(sample.EnemyJunglerPosition))).ToArray());
 
     private static ObservationDto Observation(FactualObservation observation) => observation switch
     {
@@ -198,7 +213,7 @@ public static class MatchReviewApiMapper
             value.DeathCount,
             value.AssistCount,
             value.DistinctEventCount,
-            value.Events.Select(@event => new CombatEventDto(Source(@event.Source), @event.TimestampMs, @event.KillerParticipantId, @event.VictimParticipantId, @event.AssistingParticipantIds)).ToArray()),
+            value.Events.Select(@event => new CombatEventDto(Source(@event.Source), @event.TimestampMs, @event.KillerParticipantId, @event.VictimParticipantId, @event.AssistingParticipantIds, Position(@event.Position))).ToArray()),
         EliteObjectiveContextObservation value => new EliteObjectiveContextDto(
             value.Events.Select(@event => new ObjectiveEventDto(
                 Source(@event.Source),
@@ -207,7 +222,8 @@ public static class MatchReviewApiMapper
                 @event.MonsterSubType,
                 @event.KillerParticipantId,
                 @event.AssistingParticipantIds,
-                Team(@event.TeamAttribution))).ToArray()),
+                Team(@event.TeamAttribution),
+                Position(@event.Position))).ToArray()),
         _ => throw new InvalidOperationException($"Unsupported factual observation {observation.GetType().Name}.")
     };
 
@@ -243,18 +259,6 @@ public static class MatchReviewApiMapper
         };
     }
 
-    private static SelectedReviewWindowKey WindowKey(
-        GameReconstruction reconstruction,
-        ReviewWindowDetectionResult detection,
-        ReviewWindowCandidate candidate) => new(
-            reconstruction.MatchId,
-            reconstruction.ConfiguredParticipantId,
-            reconstruction.EnemyResolution.ParticipantId,
-            candidate.RequestedStartTimestampMs,
-            candidate.RequestedEndTimestampMs,
-            reconstruction.ReconstructionVersion,
-            detection.DetectorVersion);
-
     private static IReadOnlyList<string> SignalKinds(IReadOnlyList<ReviewSignal> signals) => signals
         .Select(signal => signal.Kind)
         .Distinct()
@@ -267,6 +271,7 @@ public static class MatchReviewApiMapper
     private static EnemyResolutionDto Enemy(EnemyJunglerResolution value) => new(Camel(value.Status), value.ParticipantId);
     private static TeamAttributionDto Team(TeamAttribution value) => new(value.Kind.ToString(), value.SuppliedTeamId, value.ResolvedTeamId, value.DiagnosticReason);
     private static SourceEventReferenceDto Source(SourceEventReference value) => new(value.FrameIndex, value.EventIndex);
+    private static PositionDto? Position(Position? value) => value is null ? null : new(value.X, value.Y);
     private static string Camel<T>(T value) where T : struct, Enum
     {
         var text = value.ToString();

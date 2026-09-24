@@ -10,7 +10,11 @@ namespace Pathwise.Application.ReviewWindows;
 public sealed record MatchReview(
     ReviewWindowDetectionResult WindowDetection,
     FactualObservationResult FactualObservations,
-    KnowledgeAnnotationResult KnowledgeAnnotations);
+    KnowledgeAnnotationResult KnowledgeAnnotations)
+{
+    public IReadOnlyDictionary<SelectedReviewWindowKey, IReadOnlyList<ReviewPositionSample>> PositionSamplesByWindow { get; init; }
+        = new Dictionary<SelectedReviewWindowKey, IReadOnlyList<ReviewPositionSample>>();
+}
 
 public sealed class MatchReviewService(ReviewWindowService reviewWindowService)
 {
@@ -32,6 +36,11 @@ public sealed class MatchReviewService(ReviewWindowService reviewWindowService)
         return new(
             reviewWindows.Reconstruction,
             reviewWindows.Source,
-            new(reviewWindows.Value, observations, knowledge));
+            new MatchReview(reviewWindows.Value, observations, knowledge)
+            {
+                PositionSamplesByWindow = reviewWindows.Value.Candidates.ToDictionary(
+                    candidate => ReviewPositionSelector.KeyFor(reviewWindows.Reconstruction, reviewWindows.Value, candidate),
+                    candidate => ReviewPositionSelector.Select(reviewWindows.Reconstruction, candidate))
+            });
     }
 }

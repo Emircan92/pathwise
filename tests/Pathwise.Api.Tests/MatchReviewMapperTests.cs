@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Pathwise.Api;
 using Pathwise.Application.Knowledge;
 using Pathwise.Application.Reconstruction;
@@ -99,12 +100,22 @@ public sealed class MatchReviewMapperTests
         var objective = Assert.IsType<EliteObjectiveContextDto>(Assert.Single(window.Observations));
         Assert.Equal([(4, 1), (4, 2)], objective.Events.Select(value => (value.Source.FrameIndex, value.Source.EventIndex)).ToArray());
         Assert.Equal([(4, 1), (4, 2)], window.KnowledgeAnnotations.Select(value => (value.Target.Event!.FrameIndex, value.Target.Event.EventIndex)).ToArray());
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("windows")[0].GetProperty("observations")[0].GetProperty("events")[0].GetProperty("position").ValueKind);
+        Assert.Equal(JsonValueKind.Array, json.RootElement.GetProperty("windows")[0].GetProperty("positionSamples").ValueKind);
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("windows")[0].GetProperty("positionSamples")[0].GetProperty("configuredPlayerPosition").ValueKind);
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("windows")[0].GetProperty("positionSamples")[0].GetProperty("enemyJunglerPosition").ValueKind);
     }
 
     private static ReconstructionResult<MatchReview> Result(GameReconstruction reconstruction, MatchReview review) => new(
         reconstruction,
         new(DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, "v5", "v5"),
-        review);
+        review with
+        {
+            PositionSamplesByWindow = review.WindowDetection.Candidates.ToDictionary(
+                candidate => ReviewPositionSelector.KeyFor(reconstruction, review.WindowDetection, candidate),
+                candidate => ReviewPositionSelector.Select(reconstruction, candidate))
+        });
 
     private static ReviewWindowDetectionResult Detection(GameReconstruction reconstruction, IReadOnlyList<ReviewWindowCandidate> candidates) => new(
         candidates,

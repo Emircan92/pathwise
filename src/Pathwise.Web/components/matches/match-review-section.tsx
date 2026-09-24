@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ReviewWindowMap } from "./review-window-map";
+import type { EvidenceLayer } from "./spatial-evidence";
 import {
   getMatchReview,
   type KnowledgeAnnotation,
@@ -69,15 +71,18 @@ export function MatchReviewSection({ matchId }: { matchId: string }) {
       ) : !current?.review ? (
         <div className="rounded-xl border bg-card p-5 text-sm text-muted-foreground">Loading match review…</div>
       ) : (
-        <MatchReviewContent review={current.review} />
+        <MatchReviewContent key={current.review.matchId} review={current.review} />
       )}
     </section>
   );
 }
 
 export function MatchReviewContent({ review }: { review: MatchReview }) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [enabledLayers, setEnabledLayers] = useState<Record<EvidenceLayer, boolean>>({ you: true, enemy: true, combat: true, objectives: true });
   const windows = [...review.windows].sort((left, right) =>
     left.requestedStartTimestampMs - right.requestedStartTimestampMs || left.requestedEndTimestampMs - right.requestedEndTimestampMs);
+  const selectedWindow = windows[selectedIndex] ?? windows[0];
   return (
     <div className="space-y-5">
       {review.enemyResolution.status !== "resolved" ? (
@@ -87,7 +92,15 @@ export function MatchReviewContent({ review }: { review: MatchReview }) {
       )}
       <KnowledgeCoverage review={review} />
       {windows.length === 0 ? <p className="rounded-xl border bg-card p-5 text-sm text-muted-foreground">No review periods were selected for this match.</p> : null}
-      {windows.map((window) => <ReviewWindowCard key={`${window.requestedStartTimestampMs}-${window.requestedEndTimestampMs}-${window.selectionRank}`} window={window} patch={review.knowledge.publicPatch} knowledgeAvailable={review.knowledge.coverage === "available"} />)}
+      {selectedWindow ? <>
+        <div className="max-w-xl">
+          <label htmlFor="review-period" className="mb-2 block text-sm font-medium">Review period</label>
+          <select id="review-period" value={selectedIndex} onChange={(event) => setSelectedIndex(Number(event.target.value))} className="min-h-11 w-full rounded-md border bg-card px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring">
+            {windows.map((window, index) => <option key={`${window.requestedStartTimestampMs}-${window.requestedEndTimestampMs}-${window.selectionRank}`} value={index}>{formatMatchTime(window.requestedStartTimestampMs)}–{formatMatchTime(window.requestedEndTimestampMs)} · {selectionLabels[window.primarySelectionReason]}</option>)}
+          </select>
+        </div>
+        <ReviewWindowCard key={`${selectedWindow.requestedStartTimestampMs}-${selectedWindow.requestedEndTimestampMs}-${selectedWindow.selectionRank}`} window={selectedWindow} review={review} patch={review.knowledge.publicPatch} knowledgeAvailable={review.knowledge.coverage === "available"} enabledLayers={enabledLayers} onToggleLayer={(layer) => setEnabledLayers((current) => ({ ...current, [layer]: !current[layer] }))} />
+      </> : null}
       {review.sourceDataIssues.length > 0 ? (
         <details className="rounded-xl border border-warning/30 bg-warning/5 p-4 text-sm">
           <summary className="cursor-pointer font-medium text-warning">Source-data notices ({review.sourceDataIssues.length})</summary>
@@ -109,9 +122,8 @@ function KnowledgeCoverage({ review }: { review: MatchReview }) {
   return <p className="rounded-lg border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">{message}</p>;
 }
 
-function ReviewWindowCard({ window, patch, knowledgeAvailable }: { window: ReviewWindow; patch: string | null; knowledgeAvailable: boolean }) {
+function ReviewWindowCard({ window, review, patch, knowledgeAvailable, enabledLayers, onToggleLayer }: { window: ReviewWindow; review: MatchReview; patch: string | null; knowledgeAvailable: boolean; enabledLayers: Record<EvidenceLayer, boolean>; onToggleLayer: (layer: EvidenceLayer) => void }) {
   const metrics = window.observations.filter(isMetricObservation);
-  const hasMetricEvidence = metrics.length > 0 || window.metricOmissions.length > 0;
   const combat = window.observations.find((observation) => observation.kind === "configuredPlayerCombat");
   const objectives = window.observations.find((observation) => observation.kind === "eliteObjectiveContext");
   return (
@@ -131,7 +143,7 @@ function ReviewWindowCard({ window, patch, knowledgeAvailable }: { window: Revie
       </div>
 
       {knowledgeAvailable ? <KnowledgeContext annotations={window.knowledgeAnnotations} objectives={objectives?.kind === "eliteObjectiveContext" ? objectives.events : []} patch={patch} /> : null}
-      {hasMetricEvidence ? <p className="mt-5 text-[11px] tabular-nums text-muted-foreground/80">Metric source frames · {formatMatchTime(window.startFrame.timestampMs)}–{formatMatchTime(window.endFrame.timestampMs)}</p> : null}
+      <ReviewWindowMap review={review} window={window} enabled={enabledLayers} onToggle={onToggleLayer} />
       <EvidenceDisclosure window={window} metrics={metrics} />
     </article>
   );

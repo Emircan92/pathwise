@@ -44,6 +44,9 @@ export type SelectionReason = "goldAndXpChange" | "goldChange" | "xpChange" | "c
 export type SignalKind = "goldDifferenceChange" | "xpDifferenceChange" | "configuredPlayerDeath" | "concentratedPlayerCombat" | "eliteMonsterKill";
 export type SourceFrame = { frameIndex: number; timestampMs: number };
 export type SourceEvent = { frameIndex: number; eventIndex: number };
+export type Position = { x: number; y: number };
+export type ReviewParticipant = { participantId: number; championName: string; teamId: number };
+export type ReviewPositionSample = { frameIndex: number; timestampMs: number; configuredPlayerPosition: Position | null; enemyJunglerPosition: Position | null };
 export type SourceDataIssue = { code: string; sourceReference: string; explanation: string; handlingOutcome: string };
 export type TeamAttribution = { kind: "KnownTeam" | "Neutral" | "Unknown"; suppliedTeamId: number | null; resolvedTeamId: number | null; diagnosticReason: string | null };
 export type MetricValues = {
@@ -53,8 +56,8 @@ export type MetricValues = {
   configuredPlayer: { startValue: number; endValue: number };
   enemyJungler: { startValue: number; endValue: number };
 };
-export type CombatEvent = { source: SourceEvent; timestampMs: number; killerParticipantId: number | null; victimParticipantId: number; assistingParticipantIds: number[] };
-export type ObjectiveEvent = { source: SourceEvent; timestampMs: number; monsterType: string | null; monsterSubType: string | null; killerParticipantId: number | null; assistingParticipantIds: number[]; teamAttribution: TeamAttribution };
+export type CombatEvent = { source: SourceEvent; timestampMs: number; killerParticipantId: number | null; victimParticipantId: number; assistingParticipantIds: number[]; position: Position | null };
+export type ObjectiveEvent = { source: SourceEvent; timestampMs: number; monsterType: string | null; monsterSubType: string | null; killerParticipantId: number | null; assistingParticipantIds: number[]; teamAttribution: TeamAttribution; position: Position | null };
 export type Observation =
   | ({ kind: "relativeGoldMovement" | "relativeXpMovement" | "relativeJungleCsMovement" } & MetricValues)
   | { kind: "configuredPlayerCombat"; kills: number; deaths: number; assists: number; distinctEventCount: number; events: CombatEvent[] }
@@ -75,10 +78,13 @@ export type ReviewWindow = {
   observations: Observation[];
   metricOmissions: { kind: MetricKind; reason: "counterRegression" }[];
   knowledgeAnnotations: KnowledgeAnnotation[];
+  positionSamples: ReviewPositionSample[];
 };
 export type MatchReview = {
   matchId: string;
+  mapId: number;
   configuredParticipantId: number;
+  participants: ReviewParticipant[];
   enemyResolution: { status: "resolved" | "missing" | "ambiguous"; participantId: number | null };
   versions: { reconstruction: number; detector: number; factualObservations: number; knowledgeAnnotations: number };
   knowledge: { publicPatch: string | null; coverage: "available" | "unknownPatch" | "noPackForPatch" | "unsupportedMatch" };

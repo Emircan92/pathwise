@@ -46,10 +46,16 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = document.RootElement;
         Assert.Equal(
-            ["matchId", "configuredParticipantId", "enemyResolution", "versions", "knowledge", "sourceDataIssues", "windows"],
+            ["matchId", "mapId", "configuredParticipantId", "participants", "enemyResolution", "versions", "knowledge", "sourceDataIssues", "windows"],
             root.EnumerateObject().Select(property => property.Name).ToArray());
         Assert.Equal("EUW1_1", root.GetProperty("matchId").GetString());
+        Assert.Equal(11, root.GetProperty("mapId").GetInt32());
         Assert.Equal(2, root.GetProperty("configuredParticipantId").GetInt32());
+        var participants = root.GetProperty("participants").EnumerateArray().ToArray();
+        Assert.Equal(10, participants.Length);
+        Assert.Equal(Enumerable.Range(1, 10), participants.Select(value => value.GetProperty("participantId").GetInt32()));
+        Assert.Equal("Khazix", participants[1].GetProperty("championName").GetString());
+        Assert.Equal(100, participants[1].GetProperty("teamId").GetInt32());
         Assert.Equal("resolved", root.GetProperty("enemyResolution").GetProperty("status").GetString());
         Assert.Equal(7, root.GetProperty("enemyResolution").GetProperty("participantId").GetInt32());
         Assert.Equal("26.18", root.GetProperty("knowledge").GetProperty("publicPatch").GetString());
@@ -59,6 +65,12 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         Assert.Equal(1_620_500, window.GetProperty("requestedEndTimestampMs").GetInt64());
         Assert.Equal(23, window.GetProperty("startFrame").GetProperty("frameIndex").GetInt32());
         Assert.Equal(1_380_440, window.GetProperty("startFrame").GetProperty("timestampMs").GetInt64());
+        var samples = window.GetProperty("positionSamples").EnumerateArray().ToArray();
+        Assert.Equal([23, 24, 25, 26, 27], samples.Select(sample => sample.GetProperty("frameIndex").GetInt32()).ToArray());
+        Assert.Equal([1_380_440L, 1_440_464L, 1_500_470L, 1_560_471L, 1_620_500L], samples.Select(sample => sample.GetProperty("timestampMs").GetInt64()).ToArray());
+        Assert.Equal((7443, 3036), Position(samples[0].GetProperty("configuredPlayerPosition")));
+        Assert.Equal((9665, 5278), Position(samples[0].GetProperty("enemyJunglerPosition")));
+        Assert.Equal((463, 692), Position(samples[1].GetProperty("configuredPlayerPosition")));
         Assert.Equal("goldAndXpChange", window.GetProperty("primarySelectionReason").GetString());
         Assert.Equal(
             ["relativeGoldMovement", "relativeXpMovement", "relativeJungleCsMovement", "configuredPlayerCombat", "eliteObjectiveContext"],
@@ -76,6 +88,10 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         Assert.Equal((24, 30), Source(annotations[1]));
         Assert.Equal((26, 7), Source(annotations[0]));
         Assert.All(window.GetProperty("observations")[4].GetProperty("events").EnumerateArray(), value => Assert.True(value.TryGetProperty("source", out _)));
+        var objectives = window.GetProperty("observations")[4].GetProperty("events").EnumerateArray().ToArray();
+        Assert.Equal((9837, 4397), Position(objectives.Single(value => SourceEvent(value) == (24, 30)).GetProperty("position")));
+        Assert.Equal((5007, 10471), Position(objectives.Single(value => SourceEvent(value) == (26, 7)).GetProperty("position")));
+        Assert.All(combat.GetProperty("events").EnumerateArray(), value => Assert.True(value.TryGetProperty("position", out _)));
     }
 
     [Fact]
@@ -124,6 +140,14 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         var source = annotation.GetProperty("target").GetProperty("event");
         return (source.GetProperty("frameIndex").GetInt32(), source.GetProperty("eventIndex").GetInt32());
     }
+
+    private static (int Frame, int Event) SourceEvent(JsonElement value)
+    {
+        var source = value.GetProperty("source");
+        return (source.GetProperty("frameIndex").GetInt32(), source.GetProperty("eventIndex").GetInt32());
+    }
+
+    private static (int X, int Y) Position(JsonElement value) => (value.GetProperty("x").GetInt32(), value.GetProperty("y").GetInt32());
 
     private static async Task SeedAsync(PathwiseDbContext db)
     {

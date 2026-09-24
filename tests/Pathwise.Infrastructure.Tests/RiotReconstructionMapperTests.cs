@@ -180,6 +180,31 @@ public sealed class RiotReconstructionMapperTests
             x.AssistingParticipantIds.Any(assist => reconstruction.Participants.Single(p => p.ParticipantId == assist).TeamId != teamId));
     }
 
+    [Fact]
+    public void SourcePositionsRemainExactAndMalformedOptionalPositionsRemainNull()
+    {
+        var fixture = MapFixture();
+        Assert.Equal(new Position(7443, 3036), fixture.Observations[23].ConfiguredPlayer.Position);
+        Assert.Equal(new Position(9665, 5278), fixture.Observations[23].EnemyJungler!.Position);
+        Assert.Equal(new Position(9837, 4397), fixture.Events.OfType<EliteMonsterKillEvent>().Single(value => value.TimestampMs == 1_427_715).Position);
+        Assert.Equal(new Position(5007, 10471), fixture.Events.OfType<EliteMonsterKillEvent>().Single(value => value.TimestampMs == 1_505_113).Position);
+
+        var (match, timeline) = FixtureJson();
+        var root = JsonNode.Parse(timeline)!.AsObject();
+        root["info"]!["frames"]![23]!["participantFrames"]!["2"]!.AsObject().Remove("position");
+        root["info"]!["frames"]![23]!["participantFrames"]!["7"]!["position"]!["x"] = "bad";
+        var dragon = Events(root).First(value => value?["type"]?.GetValue<string>() == "ELITE_MONSTER_KILL" && value["timestamp"]?.GetValue<long>() == 1_427_715)!;
+        dragon["position"]!["y"] = "bad";
+        var mapped = new GameReconstruction(_mapper.Map(match, root.ToJsonString(), MatchId, ConfiguredPuuid));
+
+        Assert.Null(mapped.Observations[23].ConfiguredPlayer.Position);
+        Assert.Null(mapped.Observations[23].EnemyJungler!.Position);
+        Assert.Null(mapped.Events.OfType<EliteMonsterKillEvent>().Single(value => value.TimestampMs == 1_427_715).Position);
+        Assert.Equal(new Position(5007, 10471), mapped.Events.OfType<EliteMonsterKillEvent>().Single(value => value.TimestampMs == 1_505_113).Position);
+        Assert.Equal((16, 6, 3), Kda(mapped.StateAt(mapped.AvailableToMs).ConfiguredPlayer));
+        Assert.Contains(mapped.SourceDataIssues, issue => issue.Code == "optional_position_missing");
+    }
+
     [Theory]
     [InlineData(300065, 2577, 2210, 5, 36, 2, 0, 0, 1979, 1915, 5, 36, 0, 0, 1)]
     [InlineData(600219, 5375, 4689, 8, 74, 5, 1, 0, 3500, 4044, 7, 75, 0, 1, 1)]
