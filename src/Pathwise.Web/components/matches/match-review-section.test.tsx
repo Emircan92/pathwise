@@ -181,7 +181,7 @@ describe("match review presentation", () => {
     expect(buildSpatialEvidence(review, period).find((entry) => entry.id.endsWith("combat:24:13"))?.label).toBe("Recorded champion kill");
     expect(buildSpatialEvidence(review, period, period.encounters[0]).filter((entry) => entry.layer === "combat")).toHaveLength(1);
     expect(buildSpatialEvidence(review, period, period.encounters[0]).filter((entry) => entry.layer === "objectives")).toHaveLength(1);
-    expect(buildSpatialEvidence(review, period, period.encounters[0]).filter((entry) => entry.kind === "sample")).toHaveLength(2);
+    expect(buildSpatialEvidence(review, period, period.encounters[0]).filter((entry) => entry.kind === "sample").map((entry) => entry.layer)).toEqual(["enemy"]);
 
     render(<MatchReviewContent review={review} />);
     fireEvent.change(screen.getByLabelText("Review period"), { target: { value: "1" } });
@@ -201,11 +201,73 @@ describe("match review presentation", () => {
   it("uses closed nearby sample bounds without substituting an outside frame", () => {
     const review = representativeReview();
     const period = review.windows[0];
+    period.encounters[0].combatEvents[0].victimParticipantId = 8;
     period.positionSamples = [1_421_653, 1_421_654, 1_455_000, 1_455_001].map((timestampMs, frameIndex) => ({
       frameIndex, timestampMs, configuredPlayerPosition: null, enemyJunglerPosition: null,
     }));
     const samples = buildSpatialEvidence(review, period, period.encounters[0]).filter((entry) => entry.kind === "sample");
     expect(samples.map((entry) => entry.timestampMs)).toEqual([1_421_654, 1_421_654, 1_455_000, 1_455_000]);
+  });
+
+  it("shows a recorded death location instead of a later base sample for the configured player", () => {
+    const review = representativeReview();
+    const period = review.windows[0];
+    period.encounters[0].combatEvents[0].position = { x: 9_000, y: 4_000 };
+    period.positionSamples = [
+      { frameIndex: 23, timestampMs: 1_424_000, configuredPlayerPosition: { x: 8_000, y: 4_000 }, enemyJunglerPosition: null },
+      { frameIndex: 24, timestampMs: 1_425_000, configuredPlayerPosition: { x: 9_000, y: 4_000 }, enemyJunglerPosition: null },
+      { frameIndex: 25, timestampMs: 1_430_000, configuredPlayerPosition: { x: 9_000, y: 4_000 }, enemyJunglerPosition: null },
+      { frameIndex: 26, timestampMs: 1_440_000, configuredPlayerPosition: { x: 463, y: 692 }, enemyJunglerPosition: null },
+    ];
+
+    const evidence = buildSpatialEvidence(review, period, period.encounters[0]);
+    expect(evidence.filter((entry) => entry.layer === "you").map((entry) => entry.timestampMs)).toEqual([1_424_000]);
+    expect(evidence.find((entry) => entry.layer === "combat")).toMatchObject({
+      timestampMs: 1_425_000, position: { x: 9_000, y: 4_000 }, kind: "event", label: "You died",
+    });
+    expect(buildSpatialEvidence(review, period).filter((entry) => entry.layer === "you")).toHaveLength(4);
+
+    render(<MatchReviewContent review={review} />);
+    fireEvent.change(screen.getByLabelText("Review period"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /23:45.000 · Single recorded kill/ }));
+    expect(screen.getByRole("button", { name: "You died, 23:45.000, recorded event" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Nearby frame sample · You, 24:00.000, frame sample" })).not.toBeInTheDocument();
+  });
+
+  it("applies the death cutoff independently to the enemy jungler across multiple events", () => {
+    const review = representativeReview();
+    const period = review.windows[0];
+    const encounter = period.encounters[0];
+    encounter.combatEvents = [
+      { ...encounter.combatEvents[0], victimParticipantId: 8, timestampMs: 1_424_000 },
+      { ...encounter.combatEvents[0], source: { frameIndex: 24, eventIndex: 13 }, victimParticipantId: 7, timestampMs: 1_430_000, position: { x: 7_000, y: 5_000 } },
+      { ...encounter.combatEvents[0], source: { frameIndex: 24, eventIndex: 14 }, victimParticipantId: 2, timestampMs: 1_445_000 },
+    ];
+    period.positionSamples = [1_425_000, 1_430_000, 1_435_000, 1_450_000].map((timestampMs, frameIndex) => ({
+      frameIndex, timestampMs, configuredPlayerPosition: { x: 8_000, y: 4_000 }, enemyJunglerPosition: { x: 7_000, y: 5_000 },
+    }));
+
+    const evidence = buildSpatialEvidence(review, period, encounter);
+    expect(evidence.filter((entry) => entry.layer === "enemy").map((entry) => entry.timestampMs)).toEqual([1_425_000]);
+    expect(evidence.filter((entry) => entry.layer === "you").map((entry) => entry.timestampMs)).toEqual([1_425_000, 1_430_000, 1_435_000]);
+    expect(evidence.find((entry) => entry.layer === "combat" && entry.eventIndex === 13)).toMatchObject({
+      kind: "event", position: { x: 7_000, y: 5_000 },
+    });
+
+    review.enemyResolution = { status: "ambiguous", participantId: null };
+    expect(buildSpatialEvidence(review, period, encounter).filter((entry) => entry.layer === "enemy")).toHaveLength(0);
+  });
+
+  it("leaves the victim location unavailable when the death has no position and only later frames exist", () => {
+    const review = representativeReview();
+    const period = review.windows[0];
+    period.positionSamples = [{ frameIndex: 24, timestampMs: 1_440_000,
+      configuredPlayerPosition: { x: 463, y: 692 }, enemyJunglerPosition: { x: 11_000, y: 7_000 } }];
+
+    const evidence = buildSpatialEvidence(review, period, period.encounters[0]);
+    expect(evidence.filter((entry) => entry.layer === "you")).toHaveLength(0);
+    expect(evidence.find((entry) => entry.layer === "combat")).toMatchObject({ position: null, kind: "event" });
+    expect(evidence.filter((entry) => entry.layer === "enemy")).toHaveLength(1);
   });
 
   it("does not call simultaneous distinct kill events a singleton", () => {

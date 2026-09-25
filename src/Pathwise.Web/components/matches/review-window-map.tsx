@@ -63,7 +63,7 @@ export function ReviewWindowMap({ review, window, encounter, enabled, onToggle }
       })}
     </fieldset>
     {review.enemyResolution.status !== "resolved" ? <p className="mt-2 text-xs text-muted-foreground">Enemy jungler positions are unavailable because the opposing jungler was {review.enemyResolution.status === "missing" ? "not identified" : "identified ambiguously"}.</p> : null}
-    {encounter && !entries.some((entry) => entry.kind === "sample") ? <p className="mt-2 text-xs text-muted-foreground">No nearby frame samples fall within this encounter&apos;s ±30-second context range.</p> : null}
+    {encounter && !entries.some((entry) => entry.kind === "sample") ? <p className="mt-2 text-xs text-muted-foreground">No nearby frame samples are shown for this encounter.</p> : null}
     <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.85fr)]">
       <div>
         {!supported ? <p className="rounded-md border p-4 text-sm">Summoner&apos;s Rift artwork is unavailable for map {review.mapId}. Recorded evidence remains below.</p> : assetFailed ? <p role="alert" className="rounded-md border p-4 text-sm">Map artwork could not load. Recorded evidence remains available in the timeline.</p> : (

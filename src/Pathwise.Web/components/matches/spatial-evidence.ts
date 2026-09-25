@@ -40,15 +40,24 @@ export function buildSpatialEvidence(review: MatchReview, window: ReviewWindow, 
   const entries: SpatialEvidence[] = [];
   const nearbyStart = encounter === null ? Number.NEGATIVE_INFINITY : Math.max(window.requestedStartTimestampMs, encounter.startTimestampMs - 30_000);
   const nearbyEnd = encounter === null ? Number.POSITIVE_INFINITY : Math.min(window.requestedEndTimestampMs, encounter.endTimestampMs + 30_000);
+  // A later frame can be after respawn; the timeline has no respawn event to tie it to this encounter.
+  const firstDeath = (participantId: number) => encounter?.combatEvents
+    .filter((event) => event.victimParticipantId === participantId)
+    .reduce<number | null>((earliest, event) => earliest === null ? event.timestampMs : Math.min(earliest, event.timestampMs), null) ?? null;
+  const playerDeath = firstDeath(review.configuredParticipantId);
+  const enemyId = review.enemyResolution.status === "resolved" ? review.enemyResolution.participantId : null;
+  const enemyDeath = enemyId === null ? null : firstDeath(enemyId);
   for (const sample of window.positionSamples.filter((sample) => sample.timestampMs >= nearbyStart && sample.timestampMs <= nearbyEnd)) {
     const boundary = sample.timestampMs <= window.requestedStartTimestampMs;
-    entries.push({ id: `${windowKey}:sample:${sample.frameIndex}:${review.configuredParticipantId}`, layer: "you", timestampMs: sample.timestampMs,
-      label: encounter ? "Nearby frame sample · You" : "You", position: sample.configuredPlayerPosition, kind: "sample", boundary, frameIndex: sample.frameIndex, eventIndex: -1,
-      description: encounter ? `${champion(review, review.configuredParticipantId)} · Nearby frame sample; this does not establish encounter participation or exact event presence` : `${champion(review, review.configuredParticipantId)} · Frame sample` });
-    if (review.enemyResolution.status === "resolved" && review.enemyResolution.participantId !== null) {
-      entries.push({ id: `${windowKey}:sample:${sample.frameIndex}:${review.enemyResolution.participantId}`, layer: "enemy", timestampMs: sample.timestampMs,
+    if (playerDeath === null || sample.timestampMs < playerDeath) {
+      entries.push({ id: `${windowKey}:sample:${sample.frameIndex}:${review.configuredParticipantId}`, layer: "you", timestampMs: sample.timestampMs,
+        label: encounter ? "Nearby frame sample · You" : "You", position: sample.configuredPlayerPosition, kind: "sample", boundary, frameIndex: sample.frameIndex, eventIndex: -1,
+        description: encounter ? `${champion(review, review.configuredParticipantId)} · Nearby frame sample; this does not establish encounter participation or exact event presence` : `${champion(review, review.configuredParticipantId)} · Frame sample` });
+    }
+    if (enemyId !== null && (enemyDeath === null || sample.timestampMs < enemyDeath)) {
+      entries.push({ id: `${windowKey}:sample:${sample.frameIndex}:${enemyId}`, layer: "enemy", timestampMs: sample.timestampMs,
         label: encounter ? "Nearby frame sample · Enemy jungler" : "Enemy jungler", position: sample.enemyJunglerPosition, kind: "sample", boundary, frameIndex: sample.frameIndex, eventIndex: -1,
-        description: encounter ? `${champion(review, review.enemyResolution.participantId)} · Nearby frame sample; this does not establish encounter participation or exact event presence` : `${champion(review, review.enemyResolution.participantId)} · Frame sample` });
+        description: encounter ? `${champion(review, enemyId)} · Nearby frame sample; this does not establish encounter participation or exact event presence` : `${champion(review, enemyId)} · Frame sample` });
     }
   }
   const combatEvents = encounter ? encounter.combatEvents : [...new Map(window.encounters.flatMap((item) => item.combatEvents).map((event) => [`${event.source.frameIndex}:${event.source.eventIndex}`, event])).values()];
