@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Pathwise.Application.Reconstruction;
 using Pathwise.Application.ReviewWindows;
 using Pathwise.Domain.FactualObservations;
+using Pathwise.Domain.Encounters;
 using Pathwise.Domain.Knowledge;
 using Pathwise.Domain.Reconstruction;
 using Pathwise.Domain.ReviewWindows;
@@ -23,7 +24,8 @@ public sealed record MatchReviewVersionsDto(
     int Reconstruction,
     int Detector,
     int FactualObservations,
-    int KnowledgeAnnotations);
+    int KnowledgeAnnotations,
+    int Encounters);
 
 public sealed record MatchReviewKnowledgeDto(string? PublicPatch, string Coverage);
 public sealed record SourceFrameDto(int FrameIndex, long TimestampMs);
@@ -42,7 +44,15 @@ public sealed record ReviewWindowDto(
     IReadOnlyList<ObservationDto> Observations,
     IReadOnlyList<MetricOmissionDto> MetricOmissions,
     IReadOnlyList<KnowledgeAnnotationDto> KnowledgeAnnotations,
-    IReadOnlyList<ReviewPositionSampleDto> PositionSamples);
+    IReadOnlyList<ReviewPositionSampleDto> PositionSamples,
+    IReadOnlyList<EncounterDto> Encounters);
+
+public sealed record EncounterPlayerSummaryDto(bool Involved, int Kills, int Deaths, int Assists, int DistinctEventCount);
+public sealed record EncounterDto(
+    string Id, long StartTimestampMs, long EndTimestampMs, long RecordedEventSpanMs,
+    int CombatEventCount, IReadOnlyList<int> ParticipantIds, int DistinctParticipantCount,
+    EncounterPlayerSummaryDto ConfiguredPlayerSummary, bool? EnemyJunglerInvolved,
+    IReadOnlyList<CombatEventDto> CombatEvents, IReadOnlyList<ObjectiveEventDto> AssociatedObjectiveEvents);
 
 public sealed record MetricOmissionDto(string Kind, string Reason);
 public sealed record MetricEndpointDto(long StartValue, long EndValue);
@@ -147,6 +157,7 @@ public static class MatchReviewApiMapper
     {
         var review = result.Value;
         var observationsByWindow = review.FactualObservations.Windows.ToDictionary(window => window.Window);
+        var encountersByWindow = review.Encounters.Windows.ToDictionary(window => window.Window);
         var annotationsByWindow = review.KnowledgeAnnotations.Annotations
             .GroupBy(annotation => annotation.Target.Window)
             .ToDictionary(group => group.Key, group => (IReadOnlyList<KnowledgeAnnotation>)group.ToArray());
@@ -162,7 +173,9 @@ public static class MatchReviewApiMapper
             annotationsByWindow.TryGetValue(key, out var annotations);
             if (!review.PositionSamplesByWindow.TryGetValue(key, out var positionSamples))
                 throw new InvalidOperationException("A selected review window has no matching position samples.");
-            return MapWindow(candidate, factual, annotations ?? [], factsById, positionSamples);
+            if (!encountersByWindow.TryGetValue(key, out var encounters))
+                throw new InvalidOperationException("A selected review window has no matching encounter result.");
+            return MapWindow(candidate, factual, annotations ?? [], factsById, positionSamples, encounters.Encounters);
         }).ToArray();
 
         var patch = review.KnowledgeAnnotations.PatchResolution.Patch;
@@ -177,7 +190,8 @@ public static class MatchReviewApiMapper
                 result.Reconstruction.ReconstructionVersion,
                 review.WindowDetection.DetectorVersion,
                 review.FactualObservations.GeneratorVersion,
-                review.KnowledgeAnnotations.GeneratorVersion),
+                review.KnowledgeAnnotations.GeneratorVersion,
+                review.Encounters.DetectorVersion),
             new(patch is null ? null : $"{patch.Major}.{patch.Minor}", Camel(review.KnowledgeAnnotations.Coverage)),
             review.WindowDetection.SourceIssues.Select(Issue).ToArray(),
             windows);
@@ -188,7 +202,8 @@ public static class MatchReviewApiMapper
         WindowFactualObservations factual,
         IReadOnlyList<KnowledgeAnnotation> annotations,
         IReadOnlyDictionary<string, ObjectiveInitialSpawnFact> factsById,
-        IReadOnlyList<ReviewPositionSample> positionSamples) => new(
+        IReadOnlyList<ReviewPositionSample> positionSamples,
+        IReadOnlyList<Encounter> encounters) => new(
             candidate.RequestedStartTimestampMs,
             candidate.RequestedEndTimestampMs,
             Frame(candidate.Changes.StartState),
@@ -201,7 +216,25 @@ public static class MatchReviewApiMapper
             factual.Omissions.Select(omission => new MetricOmissionDto(Camel(omission.Kind), "counterRegression")).ToArray(),
             annotations.Select(annotation => Annotation(annotation, factsById)).ToArray(),
             positionSamples.Select(sample => new ReviewPositionSampleDto(sample.FrameIndex, sample.TimestampMs,
-                Position(sample.ConfiguredPlayerPosition), Position(sample.EnemyJunglerPosition))).ToArray());
+                Position(sample.ConfiguredPlayerPosition), Position(sample.EnemyJunglerPosition))).ToArray(),
+            encounters.Select(Encounter).ToArray());
+
+    private static EncounterDto Encounter(Encounter value) => new(
+        value.Id, value.StartTimestampMs, value.EndTimestampMs, value.RecordedEventSpanMs,
+        value.CombatEventCount, value.ParticipantIds, value.DistinctParticipantCount,
+        new(value.ConfiguredPlayerSummary.Involved, value.ConfiguredPlayerSummary.Kills,
+            value.ConfiguredPlayerSummary.Deaths, value.ConfiguredPlayerSummary.Assists,
+            value.ConfiguredPlayerSummary.DistinctEventCount), value.EnemyJunglerInvolved,
+        value.CombatEvents.Select(Combat).ToArray(), value.AssociatedObjectiveEvents.Select(Objective).ToArray());
+
+    private static CombatEventDto Combat(ChampionKillEvent value) => new(
+        Source(value.Source), value.TimestampMs, value.KillerParticipantId, value.VictimParticipantId,
+        value.AssistingParticipantIds, Position(value.Position));
+
+    private static ObjectiveEventDto Objective(EliteMonsterKillEvent value) => new(
+        Source(value.Source), value.TimestampMs, value.MonsterType, value.MonsterSubType,
+        value.KillerParticipantId, value.AssistingParticipantIds,
+        Team(value.TeamAttribution), Position(value.Position));
 
     private static ObservationDto Observation(FactualObservation observation) => observation switch
     {

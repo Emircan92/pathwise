@@ -2,6 +2,7 @@ using Pathwise.Application.Ingestion;
 using Pathwise.Application.Knowledge;
 using Pathwise.Application.Reconstruction;
 using Pathwise.Domain.FactualObservations;
+using Pathwise.Domain.Encounters;
 using Pathwise.Domain.Knowledge;
 using Pathwise.Domain.ReviewWindows;
 
@@ -10,7 +11,8 @@ namespace Pathwise.Application.ReviewWindows;
 public sealed record MatchReview(
     ReviewWindowDetectionResult WindowDetection,
     FactualObservationResult FactualObservations,
-    KnowledgeAnnotationResult KnowledgeAnnotations)
+    KnowledgeAnnotationResult KnowledgeAnnotations,
+    EncounterDetectionResult Encounters)
 {
     public IReadOnlyDictionary<SelectedReviewWindowKey, IReadOnlyList<ReviewPositionSample>> PositionSamplesByWindow { get; init; }
         = new Dictionary<SelectedReviewWindowKey, IReadOnlyList<ReviewPositionSample>>();
@@ -27,6 +29,7 @@ public sealed class MatchReviewService(ReviewWindowService reviewWindowService)
         var observations = new FactualObservationGenerator().Generate(
             reviewWindows.Reconstruction,
             reviewWindows.Value);
+        var encounters = new EncounterDetector().Detect(reviewWindows.Reconstruction, reviewWindows.Value);
         var patch = new PublicPatchResolver().Resolve(reviewWindows.Reconstruction.Patch);
         var knowledge = new KnowledgeAnnotationGenerator().Generate(
             reviewWindows.Reconstruction,
@@ -36,7 +39,7 @@ public sealed class MatchReviewService(ReviewWindowService reviewWindowService)
         return new(
             reviewWindows.Reconstruction,
             reviewWindows.Source,
-            new MatchReview(reviewWindows.Value, observations, knowledge)
+            new MatchReview(reviewWindows.Value, observations, knowledge, encounters)
             {
                 PositionSamplesByWindow = reviewWindows.Value.Candidates.ToDictionary(
                     candidate => ReviewPositionSelector.KeyFor(reviewWindows.Reconstruction, reviewWindows.Value, candidate),

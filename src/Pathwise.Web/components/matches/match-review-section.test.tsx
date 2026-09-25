@@ -152,6 +152,7 @@ describe("match review presentation", () => {
     const combat = period.observations.find((observation) => observation.kind === "configuredPlayerCombat");
     if (combat?.kind !== "configuredPlayerCombat") throw new Error("Test fixture lacks combat");
     combat.events[0] = { ...combat.events[0], timestampMs: 1_427_715, position: { x: 9837, y: 4397 } };
+    period.encounters[0].combatEvents[0] = { ...period.encounters[0].combatEvents[0], timestampMs: 1_427_715, position: { x: 9837, y: 4397 } };
     const objectives = period.observations.find((observation) => observation.kind === "eliteObjectiveContext");
     if (objectives?.kind !== "eliteObjectiveContext") throw new Error("Test fixture lacks objectives");
     objectives.events.push({ ...objectives.events[0], source: { frameIndex: 24, eventIndex: 31 } });
@@ -165,6 +166,57 @@ describe("match review presentation", () => {
     expect(screen.getByRole("heading", { name: "Baron Nashor killed · 25:05.113" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Review period"), { target: { value: "0" } });
     expect(screen.getByRole("heading", { name: "You · 6:00.000" })).toBeInTheDocument();
+  });
+
+  it("filters encounter evidence and samples, keeps toggles, and resets on period change", () => {
+    const review = representativeReview();
+    const period = review.windows[0];
+    period.encounters[0].associatedObjectiveEvents = [period.observations.find((item) => item.kind === "eliteObjectiveContext")!.events[1]];
+    const neutral = { source: { frameIndex: 24, eventIndex: 13 }, timestampMs: 1_500_000, killerParticipantId: 7, victimParticipantId: 8, assistingParticipantIds: [], position: { x: 4_000, y: 4_000 } };
+    period.encounters.push({ id: "enc-v1-neutral", startTimestampMs: neutral.timestampMs, endTimestampMs: neutral.timestampMs,
+      recordedEventSpanMs: 0, combatEventCount: 1, participantIds: [7, 8], distinctParticipantCount: 2,
+      configuredPlayerSummary: { involved: false, kills: 0, deaths: 0, assists: 0, distinctEventCount: 0 },
+      enemyJunglerInvolved: true, combatEvents: [neutral], associatedObjectiveEvents: [] });
+    expect(buildSpatialEvidence(review, period).filter((entry) => entry.layer === "combat")).toHaveLength(2);
+    expect(buildSpatialEvidence(review, period).find((entry) => entry.id.endsWith("combat:24:13"))?.label).toBe("Recorded champion kill");
+    expect(buildSpatialEvidence(review, period, period.encounters[0]).filter((entry) => entry.layer === "combat")).toHaveLength(1);
+    expect(buildSpatialEvidence(review, period, period.encounters[0]).filter((entry) => entry.layer === "objectives")).toHaveLength(1);
+    expect(buildSpatialEvidence(review, period, period.encounters[0]).filter((entry) => entry.kind === "sample")).toHaveLength(2);
+
+    render(<MatchReviewContent review={review} />);
+    fireEvent.change(screen.getByLabelText("Review period"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: /23:45.000 · Single recorded kill/ }));
+    expect(screen.getByRole("heading", { name: "You died · 23:45.000" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Recorded champion kill, 25:00.000/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /25:00.000 · Single recorded kill/ }));
+    expect(screen.getByText(/No nearby frame samples/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Combat"));
+    fireEvent.click(screen.getByRole("button", { name: "Whole review period" }));
+    expect(screen.getByLabelText("Combat")).not.toBeChecked();
+    fireEvent.change(screen.getByLabelText("Review period"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Review period"), { target: { value: "1" } });
+    expect(screen.getByRole("button", { name: "Whole review period" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("uses closed nearby sample bounds without substituting an outside frame", () => {
+    const review = representativeReview();
+    const period = review.windows[0];
+    period.positionSamples = [1_421_653, 1_421_654, 1_455_000, 1_455_001].map((timestampMs, frameIndex) => ({
+      frameIndex, timestampMs, configuredPlayerPosition: null, enemyJunglerPosition: null,
+    }));
+    const samples = buildSpatialEvidence(review, period, period.encounters[0]).filter((entry) => entry.kind === "sample");
+    expect(samples.map((entry) => entry.timestampMs)).toEqual([1_421_654, 1_421_654, 1_455_000, 1_455_000]);
+  });
+
+  it("does not call simultaneous distinct kill events a singleton", () => {
+    const review = representativeReview();
+    const encounter = review.windows[0].encounters[0];
+    encounter.combatEvents.push({ ...encounter.combatEvents[0], source: { frameIndex: 24, eventIndex: 14 } });
+    encounter.combatEventCount = 2;
+    render(<MatchReviewContent review={review} />);
+    fireEvent.change(screen.getByLabelText("Review period"), { target: { value: "1" } });
+    expect(screen.queryByRole("button", { name: /Single recorded kill/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /2 kill events/ })).toBeInTheDocument();
   });
 });
 
@@ -204,7 +256,7 @@ function representativeReview(): MatchReview {
     configuredParticipantId: 2,
     participants: [{ participantId: 2, championName: "Khazix", teamId: 100 }, { participantId: 7, championName: "Belveth", teamId: 200 }, { participantId: 8, championName: "Annie", teamId: 200 }],
     enemyResolution: { status: "resolved", participantId: 7 },
-    versions: { reconstruction: 1, detector: 2, factualObservations: 1, knowledgeAnnotations: 1 },
+    versions: { reconstruction: 1, detector: 2, factualObservations: 1, knowledgeAnnotations: 1, encounters: 1 },
     knowledge: { publicPatch: "26.18", coverage: "available" },
     sourceDataIssues: [],
     windows: [
@@ -228,6 +280,12 @@ function representativeReview(): MatchReview {
           { kind: "recordedObjectiveContext", fact: elementalFact, target: { observationKind: "eliteObjectiveContext", event: dragon.source }, recordedKillTimestampMs: dragon.timestampMs },
           { kind: "recordedObjectiveContext", fact: baronFact, target: { observationKind: "eliteObjectiveContext", event: baron.source }, recordedKillTimestampMs: baron.timestampMs },
         ],
+        encounters: [{ id: "enc-v1-test", startTimestampMs: 1_425_000, endTimestampMs: 1_425_000, recordedEventSpanMs: 0,
+          combatEventCount: 1, participantIds: [2, 7], distinctParticipantCount: 2,
+          configuredPlayerSummary: { involved: true, kills: 0, deaths: 1, assists: 0, distinctEventCount: 1 },
+          enemyJunglerInvolved: true,
+          combatEvents: [{ source: { frameIndex: 24, eventIndex: 12 }, timestampMs: 1_425_000, killerParticipantId: 7, victimParticipantId: 2, assistingParticipantIds: [], position: null }],
+          associatedObjectiveEvents: [] }],
       },
       {
         requestedStartTimestampMs: 300_000, requestedEndTimestampMs: 360_000,
@@ -235,6 +293,7 @@ function representativeReview(): MatchReview {
         selectionRank: 2, primarySelectionReason: "configuredPlayerDeath", signalKinds: ["configuredPlayerDeath"], absorbedSignalKinds: [], observations: [], metricOmissions: [],
         positionSamples: [{ frameIndex: 5, timestampMs: 300_000, configuredPlayerPosition: null, enemyJunglerPosition: null }, { frameIndex: 6, timestampMs: 360_000, configuredPlayerPosition: null, enemyJunglerPosition: null }],
         knowledgeAnnotations: [{ kind: "nearInitialSpawn", fact: elementalFact, target: { observationKind: null, event: null }, recordedKillTimestampMs: null }],
+        encounters: [],
       },
     ],
   };

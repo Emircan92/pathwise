@@ -60,6 +60,9 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         Assert.Equal(7, root.GetProperty("enemyResolution").GetProperty("participantId").GetInt32());
         Assert.Equal("26.18", root.GetProperty("knowledge").GetProperty("publicPatch").GetString());
         Assert.Equal("available", root.GetProperty("knowledge").GetProperty("coverage").GetString());
+        Assert.Equal(1, root.GetProperty("versions").GetProperty("encounters").GetInt32());
+        Assert.Equal([3, 6, 2, 4, 4], root.GetProperty("windows").EnumerateArray()
+            .Select(value => value.GetProperty("encounters").GetArrayLength()).ToArray());
 
         var window = root.GetProperty("windows").EnumerateArray().Single(value => value.GetProperty("requestedStartTimestampMs").GetInt64() == 1_421_654);
         Assert.Equal(1_620_500, window.GetProperty("requestedEndTimestampMs").GetInt64());
@@ -92,6 +95,15 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         Assert.Equal((9837, 4397), Position(objectives.Single(value => SourceEvent(value) == (24, 30)).GetProperty("position")));
         Assert.Equal((5007, 10471), Position(objectives.Single(value => SourceEvent(value) == (26, 7)).GetProperty("position")));
         Assert.All(combat.GetProperty("events").EnumerateArray(), value => Assert.True(value.TryGetProperty("position", out _)));
+        var encounters = window.GetProperty("encounters").EnumerateArray().ToArray();
+        Assert.Equal(4, encounters.Length);
+        var grouped = encounters[1];
+        Assert.Equal(4, grouped.GetProperty("combatEventCount").GetInt32());
+        Assert.Equal(4, grouped.GetProperty("combatEvents").GetArrayLength());
+        Assert.StartsWith("enc-v1-", grouped.GetProperty("id").GetString());
+        Assert.True(grouped.GetProperty("enemyJunglerInvolved").ValueKind is JsonValueKind.True or JsonValueKind.False);
+        Assert.Contains(grouped.GetProperty("associatedObjectiveEvents").EnumerateArray(), value =>
+            value.GetProperty("monsterType").GetString() == "BARON_NASHOR");
     }
 
     [Fact]

@@ -4,6 +4,7 @@ using Pathwise.Application.Knowledge;
 using Pathwise.Application.Reconstruction;
 using Pathwise.Application.ReviewWindows;
 using Pathwise.Domain.FactualObservations;
+using Pathwise.Domain.Encounters;
 using Pathwise.Domain.Knowledge;
 using Pathwise.Domain.Reconstruction;
 using Pathwise.Domain.ReviewWindows;
@@ -36,7 +37,7 @@ public sealed class MatchReviewMapperTests
             KnowledgeAnnotationGenerator.InitialSpawnContextRadiusMs,
             []);
 
-        var response = MatchReviewApiMapper.Map(Result(reconstruction, new(detection, observations, knowledge)));
+        var response = MatchReviewApiMapper.Map(Result(reconstruction, new(detection, observations, knowledge, new EncounterDetector().Detect(reconstruction, detection))));
 
         Assert.Equal(expectedCoverage, response.Knowledge.Coverage);
         Assert.Equal(expectedPatch, response.Knowledge.PublicPatch);
@@ -65,7 +66,7 @@ public sealed class MatchReviewMapperTests
             [new(key, reconstruction.EnemyResolution, [], [omission], [])]);
         var knowledge = new KnowledgeAnnotationResult(1, new(reconstruction.Patch, null, "test"), KnowledgeCoverage.UnknownPatch, null, 60_000, []);
 
-        var response = MatchReviewApiMapper.Map(Result(reconstruction, new(detection, observations, knowledge)));
+        var response = MatchReviewApiMapper.Map(Result(reconstruction, new(detection, observations, knowledge, new EncounterDetector().Detect(reconstruction, detection))));
 
         var window = Assert.Single(response.Windows);
         Assert.Empty(window.Observations);
@@ -94,7 +95,7 @@ public sealed class MatchReviewMapperTests
                 new(fact.Id, new(key, observationKey, second.Source), KnowledgeAnnotationKind.RecordedObjectiveContext, timestamp)
             ]);
 
-        var response = MatchReviewApiMapper.Map(Result(reconstruction, new(detection, observations, knowledge)));
+        var response = MatchReviewApiMapper.Map(Result(reconstruction, new(detection, observations, knowledge, new EncounterDetector().Detect(reconstruction, detection))));
 
         var window = Assert.Single(response.Windows);
         var objective = Assert.IsType<EliteObjectiveContextDto>(Assert.Single(window.Observations));

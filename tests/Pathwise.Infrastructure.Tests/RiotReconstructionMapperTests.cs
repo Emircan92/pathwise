@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Pathwise.Application.Knowledge;
 using Pathwise.Domain.FactualObservations;
+using Pathwise.Domain.Encounters;
 using Pathwise.Domain.Knowledge;
 using Pathwise.Domain.Reconstruction;
 using Pathwise.Domain.ReviewWindows;
@@ -14,6 +15,35 @@ public sealed class RiotReconstructionMapperTests
     private const string MatchId = "EUW1_1";
     private const string ConfiguredPuuid = "participant-2-puuid";
     private readonly RiotReconstructionMapper _mapper = new();
+
+    [Fact]
+    public void FixtureProducesApprovedEncounterMemberships()
+    {
+        var reconstruction = MapFixture();
+        var windows = new ReviewWindowDetector().Detect(reconstruction, ReviewWindowOptions.Default);
+        var detected = new EncounterDetector().Detect(reconstruction, windows);
+
+        Assert.Equal(1, detected.DetectorVersion);
+        Assert.Equal([3, 6, 2, 4, 4], detected.Windows.Select(window => window.Encounters.Count).ToArray());
+        var fourth = detected.Windows[3].Encounters;
+        Assert.Equal(new long[][]
+        {
+            [1_427_147],
+            [1_481_654, 1_485_227, 1_488_530, 1_489_049],
+            [1_571_125, 1_588_379],
+            [1_607_266, 1_615_458]
+        }, fourth.Select(encounter => encounter.CombatEvents.Select(e => e.TimestampMs).ToArray()).ToArray());
+        Assert.Equal(4, fourth[1].CombatEventCount);
+        Assert.Equal([(25, 22), (25, 23), (25, 24), (25, 26)], fourth[1].CombatEvents
+            .Select(e => (e.Source.FrameIndex, e.Source.EventIndex)).ToArray());
+        Assert.Equal("enc-v1-7583183858e55e5a5fe7a30a151d775804824b89074357a9d7df0c9d0acb6c3d", fourth[1].Id);
+        Assert.Equal((0, 1, 0), (fourth[1].ConfiguredPlayerSummary.Kills,
+            fourth[1].ConfiguredPlayerSummary.Deaths, fourth[1].ConfiguredPlayerSummary.Assists));
+        Assert.Contains(fourth[1].AssociatedObjectiveEvents, e => e.MonsterType == "BARON_NASHOR");
+        Assert.DoesNotContain(fourth[0].AssociatedObjectiveEvents, e => e.MonsterType == "DRAGON");
+        Assert.Equal(3, fourth[1].GroupingEdges.Count);
+        Assert.Equal(fourth[1].CombatEvents.Select(e => e.Source).Distinct().Count(), fourth[1].CombatEventCount);
+    }
 
     [Fact]
     public void FixtureProducesApprovedReviewWindowsWithTraceableEvidence()

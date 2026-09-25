@@ -7,6 +7,7 @@ import type { EvidenceLayer } from "./spatial-evidence";
 import {
   getMatchReview,
   type KnowledgeAnnotation,
+  type Encounter,
   type MatchReview,
   type MetricKind,
   type ObjectiveEvent,
@@ -123,6 +124,8 @@ function KnowledgeCoverage({ review }: { review: MatchReview }) {
 }
 
 function ReviewWindowCard({ window, review, patch, knowledgeAvailable, enabledLayers, onToggleLayer }: { window: ReviewWindow; review: MatchReview; patch: string | null; knowledgeAvailable: boolean; enabledLayers: Record<EvidenceLayer, boolean>; onToggleLayer: (layer: EvidenceLayer) => void }) {
+  const [encounterId, setEncounterId] = useState<string | null>(null);
+  const selectedEncounter = window.encounters.find((encounter) => encounter.id === encounterId) ?? null;
   const metrics = window.observations.filter(isMetricObservation);
   const combat = window.observations.find((observation) => observation.kind === "configuredPlayerCombat");
   const objectives = window.observations.find((observation) => observation.kind === "eliteObjectiveContext");
@@ -143,10 +146,30 @@ function ReviewWindowCard({ window, review, patch, knowledgeAvailable, enabledLa
       </div>
 
       {knowledgeAvailable ? <KnowledgeContext annotations={window.knowledgeAnnotations} objectives={objectives?.kind === "eliteObjectiveContext" ? objectives.events : []} patch={patch} /> : null}
-      <ReviewWindowMap review={review} window={window} enabled={enabledLayers} onToggle={onToggleLayer} />
+      <section aria-label="Combat encounters" className="mt-6 border-t border-border/60 pt-5">
+        <h4 className="font-medium">Combat encounters</h4>
+        <p className="mt-1 text-xs text-muted-foreground">Recorded kills within this review period. First and last kill times do not establish the full fight duration.</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <button type="button" aria-pressed={selectedEncounter === null} onClick={() => setEncounterId(null)} className="min-h-11 rounded-md border px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring" >Whole review period</button>
+          {window.encounters.map((encounter) => <EncounterRow key={encounter.id} encounter={encounter} review={review} selected={selectedEncounter?.id === encounter.id} onSelect={() => setEncounterId(encounter.id)} />)}
+        </div>
+        {window.encounters.length === 0 ? <p className="mt-2 text-xs text-muted-foreground">No recorded champion kills in this period.</p> : null}
+        {selectedEncounter ? <p className="mt-3 text-xs text-muted-foreground">Nearby objective events are location and time context; proximity does not establish causation or contestability.</p> : null}
+      </section>
+      <ReviewWindowMap key={selectedEncounter?.id ?? "whole"} review={review} window={window} encounter={selectedEncounter} enabled={enabledLayers} onToggle={onToggleLayer} />
       <EvidenceDisclosure window={window} metrics={metrics} />
     </article>
   );
+}
+
+function EncounterRow({ encounter, review, selected, onSelect }: { encounter: Encounter; review: MatchReview; selected: boolean; onSelect: () => void }) {
+  const player = encounter.configuredPlayerSummary;
+  const names = encounter.participantIds.map((id) => review.participants.find((participant) => participant.participantId === id)?.championName ?? `Participant ${id}`);
+  return <button type="button" aria-pressed={selected} onClick={onSelect} className="min-h-11 rounded-md border px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring">
+    <span className="block font-medium tabular-nums">{formatMatchTime(encounter.startTimestampMs, true)}{encounter.combatEventCount === 1 ? " · Single recorded kill" : `–${formatMatchTime(encounter.endTimestampMs, true)}`}</span>
+    <span className="block text-xs text-muted-foreground">{formatCount(encounter.combatEventCount, "kill event")} · {formatCount(encounter.distinctParticipantCount, "participant")} · {player.involved ? `You ${player.kills}/${player.deaths}/${player.assists} K/D/A` : "You not recorded in these kills"}</span>
+    <span className="block text-xs text-muted-foreground">{names.join(", ") || "No known participants"}</span>
+  </button>;
 }
 
 function MetricLine({ observation }: { observation: Extract<Observation, { kind: MetricKind }> }) {

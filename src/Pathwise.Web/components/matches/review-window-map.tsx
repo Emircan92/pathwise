@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
-import type { MatchReview, ReviewWindow } from "@/lib/api/pathwise";
+import type { Encounter, MatchReview, ReviewWindow } from "@/lib/api/pathwise";
 import { projectSummonersRiftPosition } from "@/lib/maps/summoners-rift-map-v1-projection";
 import { buildSpatialEvidence, initialSpatialEvidence, type EvidenceLayer, type SpatialEvidence } from "./spatial-evidence";
 
@@ -29,15 +29,16 @@ function markerClass(layer: EvidenceLayer): string {
   }
 }
 
-export function ReviewWindowMap({ review, window, enabled, onToggle }: {
+export function ReviewWindowMap({ review, window, encounter, enabled, onToggle }: {
   review: MatchReview;
   window: ReviewWindow;
+  encounter: Encounter | null;
   enabled: Record<EvidenceLayer, boolean>;
   onToggle: (layer: EvidenceLayer) => void;
 }) {
-  const [activeId, setActiveId] = useState<string | null>(() => initialSpatialEvidence(buildSpatialEvidence(review, window).filter((entry) => enabled[entry.layer])));
+  const [activeId, setActiveId] = useState<string | null>(() => initialSpatialEvidence(buildSpatialEvidence(review, window, encounter).filter((entry) => enabled[entry.layer]), encounter !== null));
   const [assetFailed, setAssetFailed] = useState(false);
-  const entries = buildSpatialEvidence(review, window).filter((entry) => enabled[entry.layer]);
+  const entries = buildSpatialEvidence(review, window, encounter).filter((entry) => enabled[entry.layer]);
   const active = entries.find((entry) => entry.id === activeId) ?? null;
   const supported = review.mapId === 11;
   const detailId = `spatial-detail-${window.requestedStartTimestampMs}-${window.requestedEndTimestampMs}`;
@@ -62,6 +63,7 @@ export function ReviewWindowMap({ review, window, enabled, onToggle }: {
       })}
     </fieldset>
     {review.enemyResolution.status !== "resolved" ? <p className="mt-2 text-xs text-muted-foreground">Enemy jungler positions are unavailable because the opposing jungler was {review.enemyResolution.status === "missing" ? "not identified" : "identified ambiguously"}.</p> : null}
+    {encounter && !entries.some((entry) => entry.kind === "sample") ? <p className="mt-2 text-xs text-muted-foreground">No nearby frame samples fall within this encounter&apos;s ±30-second context range.</p> : null}
     <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.85fr)]">
       <div>
         {!supported ? <p className="rounded-md border p-4 text-sm">Summoner&apos;s Rift artwork is unavailable for map {review.mapId}. Recorded evidence remains below.</p> : assetFailed ? <p role="alert" className="rounded-md border p-4 text-sm">Map artwork could not load. Recorded evidence remains available in the timeline.</p> : (

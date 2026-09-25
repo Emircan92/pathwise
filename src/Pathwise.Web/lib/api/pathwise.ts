@@ -58,6 +58,12 @@ export type MetricValues = {
 };
 export type CombatEvent = { source: SourceEvent; timestampMs: number; killerParticipantId: number | null; victimParticipantId: number; assistingParticipantIds: number[]; position: Position | null };
 export type ObjectiveEvent = { source: SourceEvent; timestampMs: number; monsterType: string | null; monsterSubType: string | null; killerParticipantId: number | null; assistingParticipantIds: number[]; teamAttribution: TeamAttribution; position: Position | null };
+export type Encounter = {
+  id: string; startTimestampMs: number; endTimestampMs: number; recordedEventSpanMs: number;
+  combatEventCount: number; participantIds: number[]; distinctParticipantCount: number;
+  configuredPlayerSummary: { involved: boolean; kills: number; deaths: number; assists: number; distinctEventCount: number };
+  enemyJunglerInvolved: boolean | null; combatEvents: CombatEvent[]; associatedObjectiveEvents: ObjectiveEvent[];
+};
 export type Observation =
   | ({ kind: "relativeGoldMovement" | "relativeXpMovement" | "relativeJungleCsMovement" } & MetricValues)
   | { kind: "configuredPlayerCombat"; kills: number; deaths: number; assists: number; distinctEventCount: number; events: CombatEvent[] }
@@ -79,6 +85,7 @@ export type ReviewWindow = {
   metricOmissions: { kind: MetricKind; reason: "counterRegression" }[];
   knowledgeAnnotations: KnowledgeAnnotation[];
   positionSamples: ReviewPositionSample[];
+  encounters: Encounter[];
 };
 export type MatchReview = {
   matchId: string;
@@ -86,7 +93,7 @@ export type MatchReview = {
   configuredParticipantId: number;
   participants: ReviewParticipant[];
   enemyResolution: { status: "resolved" | "missing" | "ambiguous"; participantId: number | null };
-  versions: { reconstruction: number; detector: number; factualObservations: number; knowledgeAnnotations: number };
+  versions: { reconstruction: number; detector: number; factualObservations: number; knowledgeAnnotations: number; encounters: number };
   knowledge: { publicPatch: string | null; coverage: "available" | "unknownPatch" | "noPackForPatch" | "unsupportedMatch" };
   sourceDataIssues: SourceDataIssue[];
   windows: ReviewWindow[];
