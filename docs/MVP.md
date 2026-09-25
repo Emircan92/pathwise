@@ -12,6 +12,10 @@ Statistics, graphs, timelines, and comparisons exist primarily as evidence suppo
 
 The MVP is designed for personal use and will initially analyze jungle games only.
 
+### Current implementation status
+
+Pathwise currently reconstructs stored matches, selects review-worthy periods, and presents deterministic factual observations, sourced game-knowledge annotations, recorded spatial evidence on Map V1, and grouped Combat encounters. These are separate forms of evidence and context. The overall narrative interpretation and evidence-supported alternative actions described below remain MVP goals; the current review does not generate recommendations. Jungle camp pathing inference is also not implemented.
+
 ---
 
 ## 2. Product Goal

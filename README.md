@@ -48,5 +48,8 @@ dotnet tool restore
 dotnet ef database update --project src/Pathwise.Infrastructure --startup-project src/Pathwise.Api
 ```
 
-The defaults use EUW (`euw1`) and the Europe regional route, fetch 50 Ranked
-Solo/Duo matches, and store the SQLite database under `src/Pathwise.Api/data/`.
+The defaults use EUW (`euw1`) and the Europe regional route. Each fetch
+discovers up to 50 recent Ranked Solo/Duo matches from Riot. Previously stored
+matches are not automatically pruned to that discovery limit. The recent-match
+list shows the true `totalStored` count and loads older stored pages with
+**Load more**. SQLite data is stored under `src/Pathwise.Api/data/`.

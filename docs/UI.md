@@ -264,6 +264,8 @@ They should visually communicate:
 
 A review window should feel more like an analytical narrative than a stat card.
 
+The following structure is a future design direction. The current review shows selected periods, factual observations, game context, Combat encounters, and spatial evidence; it does not provide alternative actions yet.
+
 The recommended structure is:
 
 ```text
@@ -392,3 +394,9 @@ Clarity wins.
 # 23. Combat Encounters in Review Periods
 
 Show Combat encounters between period observations and spatial evidence. The default Whole review period view includes every encounter's recorded champion kills. Selecting an encounter narrows combat and nearby objective events to its exact membership and limits existing player and enemy frame samples to its recorded kill range plus 30 seconds, within the review bounds. Frame samples remain nearby context, not evidence of participation. Keep map layers and their toggle choices intact, and reset encounter selection when the review period changes. Use “Single recorded kill” for a singleton and explain that first and last recorded kill times do not establish full fight duration.
+
+---
+
+# 24. Map V1 Spatial Evidence
+
+Within a selected review period, show recorded event locations and periodic player and enemy-jungler frame samples on calibrated, static Summoner's Rift artwork. Let the user toggle player, enemy, combat, and objective layers and inspect the same evidence in chronological order beside the map. Preserve events without a recorded or projectable position in that evidence list with a clear location status; keep the list available when map artwork cannot be shown. Explain that samples do not establish movement between frames, exact event presence, or jungle camp paths. The map is spatial context, not reconstructed terrain or objective availability.
