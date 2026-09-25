@@ -91,7 +91,7 @@ public sealed class EfMatchStore(IDbContextFactory<PathwiseDbContext> dbFactory)
 
     public async Task<MatchListView> GetMatchesAsync(string? puuid, int limit, int offset, CancellationToken ct)
     {
-        if (puuid is null) return new([], []);
+        if (puuid is null) return new(0, limit, offset, [], []);
         await using var db = await dbFactory.CreateDbContextAsync(ct);
         var candidates = await db.StoredMatches.AsNoTracking().Where(x => x.PlayerPuuid == puuid).ToListAsync(ct);
         var matches = candidates.OrderByDescending(x => x.PlayedAtUtc ?? DateTimeOffset.MinValue).ThenByDescending(x => x.DiscoveredAtUtc).Skip(offset).Take(limit).ToList();
@@ -99,7 +99,7 @@ public sealed class EfMatchStore(IDbContextFactory<PathwiseDbContext> dbFactory)
         var payloadRows = await db.MatchPayloads.AsNoTracking().Where(x => ids.Contains(x.MatchId)).Select(p => new { p.MatchId, Payload = new PayloadProjection(p.Kind, p.State, p.FailureCode, p.FailureMessage, p.FailureHttpStatus, p.RetryAfterUtc) }).ToListAsync(ct);
         var rows = matches.Select(match => new MatchProjection(match, payloadRows.Where(x => x.MatchId == match.MatchId).Select(x => x.Payload).ToList())).ToList();
         var views = rows.Select(ToView).ToList();
-        return new(views.Where(x => x.ChampionName is not null).ToList(), views.Where(x => x.ChampionName is null).ToList());
+        return new(candidates.Count, limit, offset, views.Where(x => x.ChampionName is not null).ToList(), views.Where(x => x.ChampionName is null).ToList());
     }
 
     public async Task<MatchView?> GetMatchAsync(string? puuid, string matchId, CancellationToken ct)

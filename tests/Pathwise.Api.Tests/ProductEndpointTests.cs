@@ -62,7 +62,7 @@ public sealed class ProductEndpointTests : IAsyncLifetime
         var body = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("{\"matches\":[],\"incompleteImports\":[]}", body);
+        Assert.Equal("{\"totalStored\":0,\"limit\":50,\"offset\":0,\"matches\":[],\"incompleteImports\":[]}", body);
     }
 
     private sealed record Problem(string Title);

@@ -31,6 +31,42 @@ public sealed class IngestionPersistenceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ListCountsAllPlayerRowsBeforePagingAndSplitting()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            foreach (var puuid in new[] { "player-puuid", "other-puuid" })
+                db.PlayerAccounts.Add(new() { Puuid = puuid, GameName = puuid, TagLine = "EUW", ConfiguredGameName = puuid, ConfiguredTagLine = "EUW", Platform = "euw1", Regional = "europe", ResolvedAtUtc = DateTimeOffset.UtcNow, RawJson = "{}" });
+            for (var index = 1; index <= 4; index++)
+            {
+                var match = new StoredMatchEntity { MatchId = $"EUW1_{index}", PlayerPuuid = "player-puuid", Regional = "europe", DiscoveredAtUtc = DateTimeOffset.UtcNow.AddMinutes(index), PlayedAtUtc = DateTimeOffset.UtcNow.AddMinutes(index), ChampionName = index == 3 ? null : "Kha'Zix" };
+                match.Payloads.Add(new() { MatchId = match.MatchId, Kind = PayloadKind.Match, State = PayloadState.Missing });
+                match.Payloads.Add(new() { MatchId = match.MatchId, Kind = PayloadKind.Timeline, State = PayloadState.Missing });
+                db.StoredMatches.Add(match);
+            }
+            var other = new StoredMatchEntity { MatchId = "EUW1_OTHER", PlayerPuuid = "other-puuid", Regional = "europe" };
+            other.Payloads.Add(new() { MatchId = other.MatchId, Kind = PayloadKind.Match, State = PayloadState.Missing });
+            other.Payloads.Add(new() { MatchId = other.MatchId, Kind = PayloadKind.Timeline, State = PayloadState.Missing });
+            db.StoredMatches.Add(other);
+            await db.SaveChangesAsync();
+        }
+
+        var store = new EfMatchStore(_factory);
+        var first = await store.GetMatchesAsync("player-puuid", 2, 0, CancellationToken.None);
+        var second = await store.GetMatchesAsync("player-puuid", 2, 2, CancellationToken.None);
+        var empty = await store.GetMatchesAsync(null, 2, 0, CancellationToken.None);
+
+        Assert.Equal(4, first.TotalStored);
+        Assert.Equal((2, 0), (first.Limit, first.Offset));
+        Assert.Equal(["EUW1_4"], first.Matches.Select(x => x.MatchId));
+        Assert.Equal(["EUW1_3"], first.IncompleteImports.Select(x => x.MatchId));
+        Assert.Equal(4, second.TotalStored);
+        Assert.Equal(["EUW1_2", "EUW1_1"], second.Matches.Select(x => x.MatchId));
+        Assert.Empty(second.IncompleteImports);
+        Assert.Equal(0, empty.TotalStored);
+    }
+
+    [Fact]
     public async Task RepeatedFetchSkipsPayloadRequestsForCompleteMatch()
     {
         var riot = new FakeRiotSource();

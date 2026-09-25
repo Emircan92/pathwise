@@ -25,7 +25,7 @@ export type Match = {
   timelinePayloadAvailable: boolean;
   failures: MatchFailure[];
 };
-export type MatchList = { matches: Match[]; incompleteImports: Match[] };
+export type MatchList = { totalStored: number; limit: number; offset: number; matches: Match[]; incompleteImports: Match[] };
 export type FetchResult = {
   outcome: "succeeded" | "partial" | "failed";
   requestedCount: number;
@@ -111,7 +111,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const getPlayer = () => request<Player>("/api/player");
-export const getMatches = () => request<MatchList>("/api/matches?limit=50&offset=0");
+export const getMatches = (limit = 50, offset = 0) => request<MatchList>(`/api/matches?limit=${limit}&offset=${offset}`);
 export const getMatch = (matchId: string) => request<Match>(`/api/matches/${encodeURIComponent(matchId)}`);
 export const getMatchReview = (matchId: string, signal?: AbortSignal) => request<MatchReview>(`/api/matches/${encodeURIComponent(matchId)}/review`, { signal });
 export const fetchLatestMatches = () => request<FetchResult>("/api/matches/fetch", { method: "POST" });

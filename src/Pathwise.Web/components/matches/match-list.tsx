@@ -36,8 +36,10 @@ function MatchRow({ match }: { match: Match }) {
 
 export function RecentMatches() {
   const [player, setPlayer] = useState<Player | null>(null);
-  const [data, setData] = useState<MatchList>({ matches: [], incompleteImports: [] });
+  const [data, setData] = useState<MatchList>({ totalStored: 0, limit: 50, offset: 0, matches: [], incompleteImports: [] });
+  const [loadedRows, setLoadedRows] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<FetchResult | null>(null);
@@ -45,7 +47,7 @@ export function RecentMatches() {
   const load = useCallback(async () => {
     try {
       const [nextPlayer, nextMatches] = await Promise.all([getPlayer(), getMatches()]);
-      setPlayer(nextPlayer); setData(nextMatches); setError(null);
+      setPlayer(nextPlayer); setData(nextMatches); setLoadedRows(nextMatches.matches.length + nextMatches.incompleteImports.length); setError(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not reach the Pathwise API."); }
     finally { setLoading(false); }
   }, []);
@@ -55,12 +57,29 @@ export function RecentMatches() {
     void Promise.all([getPlayer(), getMatches()])
       .then(([nextPlayer, nextMatches]) => {
         if (!current) return;
-        setPlayer(nextPlayer); setData(nextMatches); setError(null);
+        setPlayer(nextPlayer); setData(nextMatches); setLoadedRows(nextMatches.matches.length + nextMatches.incompleteImports.length); setError(null);
       })
       .catch((cause: unknown) => { if (current) setError(cause instanceof Error ? cause.message : "Could not reach the Pathwise API."); })
       .finally(() => { if (current) setLoading(false); });
     return () => { current = false; };
   }, []);
+
+  async function loadMore() {
+    setLoadingMore(true); setError(null);
+    try {
+      const page = await getMatches(50, loadedRows);
+      setData((current) => {
+        const seen = new Set([...current.matches, ...current.incompleteImports].map((match) => match.matchId));
+        return {
+          ...page,
+          matches: [...current.matches, ...page.matches.filter((match) => !seen.has(match.matchId))],
+          incompleteImports: [...current.incompleteImports, ...page.incompleteImports.filter((match) => !seen.has(match.matchId))],
+        };
+      });
+      setLoadedRows(page.offset + page.matches.length + page.incompleteImports.length);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load more matches."); }
+    finally { setLoadingMore(false); }
+  }
 
   async function fetchMatches() {
     setFetching(true); setError(null); setResult(null);
@@ -82,9 +101,10 @@ export function RecentMatches() {
         {error ? <div role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">{error}</div> : null}
         {result ? <div className="rounded-xl border bg-card p-4"><p className="font-medium capitalize">Fetch {result.outcome}</p><p className="mt-1 text-sm text-muted-foreground">Discovered {result.discoveredCount}; added {result.newlyCompleted.length}; repaired {result.repaired.length}; already complete {result.alreadyComplete.length}.</p>{result.errors.length ? <p className="mt-2 text-sm text-warning">{result.errors.length} resource failure(s). Fetch Latest Matches will retry incomplete resources that remain in the fetched set.</p> : null}</div> : null}
 
-        <section className="overflow-hidden rounded-xl border bg-card"><div className="flex items-center justify-between px-5 py-4"><h2 className="font-semibold">Ranked Solo/Duo</h2><span className="text-sm text-muted-foreground">{data.matches.length} stored</span></div>{loading ? <p className="border-t p-8 text-center text-muted-foreground">Loading matches…</p> : data.matches.length ? data.matches.map((match) => <MatchRow key={match.matchId} match={match} />) : <p className="border-t p-10 text-center text-muted-foreground">No stored matches yet. Configure Riot and fetch your latest matches.</p>}</section>
+        <section className="overflow-hidden rounded-xl border bg-card"><div className="flex items-center justify-between px-5 py-4"><h2 className="font-semibold">Ranked Solo/Duo</h2><span className="text-sm text-muted-foreground">{data.totalStored} stored</span></div>{loading ? <p className="border-t p-8 text-center text-muted-foreground">Loading matches…</p> : data.matches.length ? data.matches.map((match) => <MatchRow key={match.matchId} match={match} />) : data.totalStored === 0 ? <p className="border-t p-10 text-center text-muted-foreground">No stored matches yet. Configure Riot and fetch your latest matches.</p> : null}</section>
 
         {data.incompleteImports.length ? <section className="rounded-xl border border-warning/30 bg-card p-5"><h2 className="font-semibold">Incomplete imports</h2><p className="mt-1 text-sm text-muted-foreground">These records lack enough metadata for the main list. A future Fetch Latest Matches run retries them if Riot returns them in the fetched set.</p><div className="mt-4 space-y-3">{data.incompleteImports.map((match) => <MatchRow key={match.matchId} match={match} />)}</div></section> : null}
+        {loadedRows < data.totalStored ? <Button onClick={loadMore} disabled={loadingMore || fetching}>{loadingMore ? "Loading more…" : "Load more"}</Button> : null}
       </div>
     </main>
   );

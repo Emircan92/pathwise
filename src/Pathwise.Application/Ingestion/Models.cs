@@ -31,7 +31,7 @@ public sealed record StoredMatchState(string MatchId, bool HasMetadata, IReadOnl
 public sealed record PlayerView(string GameName, string TagLine, string Platform, string Regional, int FetchCount, bool FetchReady, IReadOnlyList<string> ConfigurationErrors, string? Puuid, DateTimeOffset? ResolvedAtUtc);
 public sealed record MatchFailureView(string Resource, string Code, string Message, int? HttpStatus, DateTimeOffset? RetryAfterUtc);
 public sealed record MatchView(string MatchId, int? QueueId, DateTimeOffset? PlayedAtUtc, int? DurationSeconds, string? ChampionName, bool? Won, string? TeamPosition, string SupportStatus, string IngestionStatus, bool MatchPayloadAvailable, bool TimelinePayloadAvailable, IReadOnlyList<MatchFailureView> Failures);
-public sealed record MatchListView(IReadOnlyList<MatchView> Matches, IReadOnlyList<MatchView> IncompleteImports);
+public sealed record MatchListView(int TotalStored, int Limit, int Offset, IReadOnlyList<MatchView> Matches, IReadOnlyList<MatchView> IncompleteImports);
 public sealed record FetchError(string? MatchId, string Resource, string Code, string Message, int? HttpStatus);
 public sealed record FetchResult(string Outcome, int RequestedCount, int DiscoveredCount, IReadOnlyList<string> NewlyCompleted, IReadOnlyList<string> Repaired, IReadOnlyList<string> AlreadyComplete, IReadOnlyList<string> Incomplete, IReadOnlyList<string> Deferred, IReadOnlyList<FetchError> Errors, DateTimeOffset? RetryAfterUtc);
 
