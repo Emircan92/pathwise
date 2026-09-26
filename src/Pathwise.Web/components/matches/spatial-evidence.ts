@@ -1,4 +1,5 @@
 import type { CombatEvent, Encounter, MatchReview, ObjectiveEvent, Position, ReviewWindow } from "@/lib/api/pathwise";
+import { projectSummonersRiftPosition } from "@/lib/maps/summoners-rift-map-v1-projection";
 
 export type EvidenceLayer = "you" | "enemy" | "combat" | "objectives";
 export type SpatialEvidence = {
@@ -13,6 +14,11 @@ export type SpatialEvidence = {
   frameIndex: number;
   eventIndex: number;
 };
+
+export function spatialEvidenceLocationStatus(entry: SpatialEvidence): string {
+  if (entry.position === null) return "No recorded map location";
+  return projectSummonersRiftPosition(entry.position) === null ? "Outside calibrated map" : "Recorded map location";
+}
 
 function champion(review: MatchReview, id: number | null): string {
   if (id === null || id === 0) return "Unknown participant";
