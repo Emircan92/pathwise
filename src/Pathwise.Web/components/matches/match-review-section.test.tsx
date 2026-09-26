@@ -99,6 +99,58 @@ describe("hierarchical match review", () => {
     expect(screen.getByRole("heading", { name: "Recorded champion kill · 25:00.000" })).toBeInTheDocument();
   });
 
+  it("zooms and fits the map without changing selected evidence", () => {
+    render(<MatchReviewContent review={reviewWithSecondEncounter()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Encounter 2 · 25:00.000–25:05.000" }));
+    const event = within(screen.getByLabelText("Encounter events")).getByRole("button", { name: /You killed a champion, 25:05\.000/ });
+    fireEvent.click(event);
+    const map = screen.getByLabelText("Interactive Summoner's Rift map");
+    vi.spyOn(map, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 600, height: 600, right: 600, bottom: 600, x: 0, y: 0, toJSON: () => ({}) });
+
+    fireEvent.wheel(map, { deltaY: -250, clientX: 300, clientY: 300 });
+    expect(map).toHaveAttribute("data-zoom", "1.50");
+    expect(event).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "You killed a champion, 25:05.000, recorded event" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Fit full map" }));
+    expect(map).toHaveAttribute("data-zoom", "1.00");
+    expect(event).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("moves the camera only on explicit focus and resets it when encounter scope changes", () => {
+    render(<MatchReviewContent review={reviewWithSecondEncounter()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Encounter 2 · 25:00.000–25:05.000" }));
+    const map = screen.getByLabelText("Interactive Summoner's Rift map");
+    vi.spyOn(map, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 600, height: 600, right: 600, bottom: 600, x: 0, y: 0, toJSON: () => ({}) });
+    const events = screen.getByLabelText("Encounter events");
+
+    fireEvent.click(within(events).getByRole("button", { name: /You killed a champion, 25:05\.000/ }));
+    expect(map).toHaveAttribute("data-zoom", "1.00");
+    fireEvent.click(screen.getByRole("button", { name: "Focus selected evidence" }));
+    expect(map).toHaveAttribute("data-zoom", "2.50");
+
+    fireEvent.click(within(events).getByRole("button", { name: /Recorded champion kill, 25:00\.000/ }));
+    expect(map).toHaveAttribute("data-zoom", "2.50");
+    fireEvent.click(screen.getByRole("button", { name: "Encounter 1 · 23:45.000" }));
+    expect(screen.getByLabelText("Interactive Summoner's Rift map")).toHaveAttribute("data-zoom", "1.00");
+  });
+
+  it("offers a larger focus mode while retaining evidence context and camera state", () => {
+    render(<MatchReviewContent review={reviewWithSecondEncounter()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Encounter 2 · 25:00.000–25:05.000" }));
+    fireEvent.click(within(screen.getByLabelText("Encounter events")).getByRole("button", { name: /You killed a champion, 25:05\.000/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open map focus mode" }));
+    expect(screen.getByLabelText("Map evidence")).toHaveAttribute("data-focus-mode", "expanded");
+    expect(screen.getByText(/Encounter scope · 25:00\.000–25:05\.000 · You killed a champion at 25:05\.000/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Interactive Summoner's Rift map")).toHaveAttribute("data-zoom", "1.50");
+
+    fireEvent.click(screen.getByRole("button", { name: "Exit map focus mode" }));
+    expect(screen.getByLabelText("Map evidence")).toHaveAttribute("data-focus-mode", "inline");
+    expect(screen.getByLabelText("Interactive Summoner's Rift map")).toHaveAttribute("data-zoom", "1.50");
+  });
+
   it("resets active evidence when changing encounter and period", () => {
     render(<MatchReviewContent review={reviewWithSecondEncounter()} />);
     fireEvent.click(screen.getByRole("button", { name: "Encounter 2 · 25:00.000–25:05.000" }));
