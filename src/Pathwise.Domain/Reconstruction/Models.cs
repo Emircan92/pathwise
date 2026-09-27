@@ -6,6 +6,29 @@ public enum TeamAttributionKind { KnownTeam, Neutral, Unknown }
 public sealed record SourceEventReference(int FrameIndex, int EventIndex);
 public sealed record SourceDataIssue(string Code, string SourceReference, string Explanation, string HandlingOutcome);
 public sealed record Position(int X, int Y);
+public sealed record MatchFieldReference(string JsonPath);
+public sealed record MatchFieldFact<T>(T Value, MatchFieldReference Source);
+
+public sealed record MatchTeamResultEvidence(
+    int TeamId,
+    MatchFieldFact<bool> Won);
+
+public sealed record MatchParticipantResultEvidence(
+    int ParticipantId,
+    int TeamId,
+    MatchFieldFact<bool> Won,
+    MatchFieldFact<bool>? GameEndedInSurrender,
+    MatchFieldFact<bool>? GameEndedInEarlySurrender,
+    MatchFieldFact<int>? NexusKills,
+    MatchFieldFact<int>? NexusTakedowns,
+    MatchFieldFact<int>? NexusLost);
+
+public sealed record MatchSummaryEvidence(
+    MatchFieldFact<int> ReportedDurationSeconds,
+    MatchFieldFact<long>? GameEndTimestampMs,
+    MatchFieldFact<string>? EndOfGameResult,
+    IReadOnlyList<MatchTeamResultEvidence> TeamResults,
+    IReadOnlyList<MatchParticipantResultEvidence> ParticipantResults);
 
 public sealed record Participant(
     int ParticipantId,
@@ -201,7 +224,8 @@ public sealed record ReconstructionInput(
     EnemyJunglerResolution EnemyResolution,
     IReadOnlyList<FrameObservation> Observations,
     IReadOnlyList<ReconstructionEvent> Events,
-    IReadOnlyList<SourceDataIssue> SourceDataIssues);
+    IReadOnlyList<SourceDataIssue> SourceDataIssues,
+    MatchSummaryEvidence? MatchSummary = null);
 
 public sealed class ReconstructionQueryException(
     string code,

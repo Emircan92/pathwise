@@ -887,7 +887,7 @@ fixtures/
     └── ...
 ```
 
-Fixture games can act as regression tests for the analysis engine.
+Fixture games form a small, purposeful calibration corpus for the analysis engine. Each frozen match should protect a materially distinct deterministic semantic pattern or an important real-world calibration failure; fixtures should not be collected to meet a target count. Handcrafted tests remain preferred for isolated rules.
 
 This becomes increasingly important as analytical logic evolves.
 
@@ -1217,7 +1217,8 @@ If yes, give it additional scrutiny before implementation.
 
      Reconstruction → Metrics and Signals → Review Windows
                                             ├→ Factual Observations → Knowledge Annotations
-                                            └→ Encounter Detection
+                                            ├→ Encounter Detection
+                                            └→ Progression Evidence
                                             ↓
                                   Combined Review Response
                                             ↓

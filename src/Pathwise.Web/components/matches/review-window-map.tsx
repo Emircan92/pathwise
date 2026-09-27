@@ -18,8 +18,8 @@ import {
 } from "./map-camera";
 import { buildSpatialEvidence, spatialEvidenceLocationStatus, type EvidenceLayer, type SpatialEvidence } from "./spatial-evidence";
 
-const layerLabels: Record<EvidenceLayer, string> = { you: "You", enemy: "Enemy jungler", combat: "Combat", objectives: "Objectives" };
-const layers: EvidenceLayer[] = ["you", "enemy", "combat", "objectives"];
+const layerLabels: Record<EvidenceLayer, string> = { you: "You", enemy: "Enemy jungler", combat: "Combat", objectives: "Objectives", progression: "Structures" };
+const layers: EvidenceLayer[] = ["you", "enemy", "combat", "objectives", "progression"];
 
 function time(timestampMs: number, exact = false): string {
   const minutes = Math.floor(timestampMs / 60_000);
@@ -33,6 +33,7 @@ function markerClass(layer: EvidenceLayer): string {
     case "enemy": return "rounded-full border-[3px] border-amber-300 bg-slate-900 text-amber-100";
     case "combat": return "rounded-t-full rounded-b-sm border-2 border-white bg-rose-600 text-white";
     case "objectives": return "text-white";
+    case "progression": return "rounded-sm border-2 border-white bg-violet-600 text-white";
   }
 }
 
@@ -209,14 +210,14 @@ export function ReviewWindowMap({ review, window, encounter, enabled, activeId, 
                   className={`absolute flex size-8 items-center justify-center text-[11px] font-bold shadow-md hover:!z-30 focus-visible:!z-30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${markerClass(entry.layer)} ${selected ? "z-20 ring-2 ring-white ring-offset-2 ring-offset-slate-950" : "z-10"}`}
                   style={{ left: `${point.xPercent}%`, top: `${point.yPercent}%`, transform: `translate(-50%, -50%) scale(${1 / camera.zoom})` }}>
                   {entry.layer === "objectives" ? <span aria-hidden="true" className="absolute inset-0 rotate-45 border-2 border-white bg-sky-500" /> : null}
-                  <span className="relative">{entry.layer === "you" ? "Y" : entry.layer === "enemy" ? "E" : entry.layer === "combat" ? "!" : "◆"}</span>
+                  <span className="relative">{entry.layer === "you" ? "Y" : entry.layer === "enemy" ? "E" : entry.layer === "combat" ? "!" : entry.layer === "objectives" ? "◆" : "S"}</span>
                   {selected ? <span aria-hidden="true" className={`absolute whitespace-nowrap rounded bg-slate-950 px-1.5 py-0.5 text-xs text-white ${point.xPercent > 65 ? "right-full mr-2" : "left-full ml-2"}`}>{time(entry.timestampMs, true)}</span> : null}
                 </button>;
               })}
             </div>
           </div>
         )}
-        <p id={`${detailId}-camera-help`} className="mt-2 text-[11px] text-muted-foreground">Scroll to zoom; drag or use arrow keys to pan while zoomed. Y/E circles are frame samples; ! and ◆ are event-reported positions. No path is inferred.</p>
+        <p id={`${detailId}-camera-help`} className="mt-2 text-[11px] text-muted-foreground">Scroll to zoom; drag or use arrow keys to pan while zoomed. Y/E circles are frame samples; !, ◆, and S are event-reported positions. No path is inferred.</p>
       </div>
       <SpatialEvidenceDetails entry={active} detailId={detailId} windowStartMs={window.requestedStartTimestampMs} />
       <SampleDisclosure entries={samples} activeId={activeId} onSelect={onActiveChange} detailId={detailId} windowStartMs={window.requestedStartTimestampMs} />

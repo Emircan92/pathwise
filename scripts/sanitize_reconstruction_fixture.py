@@ -31,11 +31,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("database", type=Path)
     parser.add_argument("source_match_id")
     parser.add_argument("output_directory", type=Path)
+    parser.add_argument("--synthetic-match-id", default=SYNTHETIC_MATCH_ID)
+    parser.add_argument("--synthetic-game-id", type=int, default=SYNTHETIC_GAME_ID)
+    parser.add_argument("--synthetic-game-name", default="synthetic-reconstruction-match-1")
+    parser.add_argument(
+        "--synthetic-start-utc",
+        type=parse_utc_timestamp_ms,
+        default=SYNTHETIC_START_MS,
+        help="ISO-8601 UTC timestamp, for example 2026-09-02T00:00:00Z.",
+    )
     return parser.parse_args()
 
 
+def parse_utc_timestamp_ms(value: str) -> int:
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() != dt.timedelta(0):
+        raise argparse.ArgumentTypeError("Synthetic start must include a UTC offset.")
+    return int(parsed.timestamp() * 1000)
+
+
 def load_payloads(database: Path, match_id: str) -> dict[str, dict[str, Any]]:
-    connection = sqlite3.connect(database)
+    connection = sqlite3.connect(f"file:{database.resolve().as_posix()}?mode=ro", uri=True)
     try:
         connection.execute("BEGIN")
         rows = connection.execute(
@@ -64,7 +80,14 @@ def replace_recursive(value: Any, key: str, replacement: Any) -> None:
             replace_recursive(child, key, replacement)
 
 
-def sanitize(payloads: dict[str, dict[str, Any]], source_match_id: str) -> dict[str, dict[str, Any]]:
+def sanitize(
+    payloads: dict[str, dict[str, Any]],
+    source_match_id: str,
+    synthetic_match_id: str,
+    synthetic_game_id: int,
+    synthetic_game_name: str,
+    synthetic_start_ms: int,
+) -> dict[str, dict[str, Any]]:
     sanitized = copy.deepcopy(payloads)
     match = sanitized["Match"]
     timeline = sanitized["Timeline"]
@@ -75,14 +98,14 @@ def sanitize(payloads: dict[str, dict[str, Any]], source_match_id: str) -> dict[
         raise RuntimeError("Participant PUUIDs are not unique.")
 
     original_start = original_match["info"]["gameStartTimestamp"]
-    absolute_offset = SYNTHETIC_START_MS - original_start
+    absolute_offset = synthetic_start_ms - original_start
     for payload in sanitized.values():
-        replace_recursive(payload, "matchId", SYNTHETIC_MATCH_ID)
-        replace_recursive(payload, "gameId", SYNTHETIC_GAME_ID)
+        replace_recursive(payload, "matchId", synthetic_match_id)
+        replace_recursive(payload, "gameId", synthetic_game_id)
         for key in ABSOLUTE_TIME_KEYS:
             replace_recursive(payload, key, lambda value, offset=absolute_offset: value + offset)
 
-    match["info"]["gameName"] = "synthetic-reconstruction-match-1"
+    match["info"]["gameName"] = synthetic_game_name
     for participant in match["info"]["participants"]:
         participant_id = participant["participantId"]
         participant["puuid"] = f"participant-{participant_id}-puuid"
@@ -149,7 +172,12 @@ def differences(before: Any, after: Any, path: tuple[str, ...] = ()) -> list[tup
     return [] if before == after else [(path, before, after)]
 
 
-def validate(original: dict[str, dict[str, Any]], sanitized: dict[str, dict[str, Any]]) -> list[tuple[tuple[str, ...], Any, Any]]:
+def validate(
+    original: dict[str, dict[str, Any]],
+    sanitized: dict[str, dict[str, Any]],
+    synthetic_match_id: str,
+    synthetic_start_ms: int,
+) -> list[tuple[tuple[str, ...], Any, Any]]:
     changes = differences(original, sanitized)
     unexpected = [change for change in changes if not is_approved_change(change[0])]
     if unexpected:
@@ -157,9 +185,9 @@ def validate(original: dict[str, dict[str, Any]], sanitized: dict[str, dict[str,
 
     match = sanitized["Match"]
     timeline = sanitized["Timeline"]
-    if match["metadata"]["matchId"] != SYNTHETIC_MATCH_ID or timeline["metadata"]["matchId"] != SYNTHETIC_MATCH_ID:
+    if match["metadata"]["matchId"] != synthetic_match_id or timeline["metadata"]["matchId"] != synthetic_match_id:
         raise RuntimeError("Synthetic match linkage is invalid.")
-    if match["info"]["gameStartTimestamp"] != SYNTHETIC_START_MS:
+    if match["info"]["gameStartTimestamp"] != synthetic_start_ms:
         raise RuntimeError("Synthetic game start is invalid.")
     expected_puuids = [participant["puuid"] for participant in match["info"]["participants"]]
     if match["metadata"]["participants"] != expected_puuids or timeline["metadata"]["participants"] != expected_puuids:
@@ -187,8 +215,15 @@ def is_approved_change(path: tuple[str, ...]) -> bool:
 def main() -> None:
     args = parse_args()
     original = load_payloads(args.database, args.source_match_id)
-    sanitized = sanitize(original, args.source_match_id)
-    changes = validate(original, sanitized)
+    sanitized = sanitize(
+        original,
+        args.source_match_id,
+        args.synthetic_match_id,
+        args.synthetic_game_id,
+        args.synthetic_game_name,
+        args.synthetic_start_utc,
+    )
+    changes = validate(original, sanitized, args.synthetic_match_id, args.synthetic_start_utc)
     args.output_directory.mkdir(parents=True, exist_ok=True)
     (args.output_directory / "match.json").write_text(json.dumps(sanitized["Match"], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (args.output_directory / "timeline.json").write_text(json.dumps(sanitized["Timeline"], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

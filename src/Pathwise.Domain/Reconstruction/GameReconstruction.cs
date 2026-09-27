@@ -18,6 +18,7 @@ public sealed class GameReconstruction
         Observations = input.Observations.OrderBy(x => x.TimestampMs).ToArray();
         Events = input.Events.OrderBy(x => x.TimestampMs).ThenBy(x => x.Source.FrameIndex).ThenBy(x => x.Source.EventIndex).ToArray();
         SourceDataIssues = input.SourceDataIssues.ToArray();
+        MatchSummary = input.MatchSummary;
         _participantsById = Participants.ToDictionary(x => x.ParticipantId);
 
         if (Observations.Count == 0) throw new ArgumentException("A reconstruction requires observations.", nameof(input));
@@ -35,6 +36,7 @@ public sealed class GameReconstruction
     public IReadOnlyList<FrameObservation> Observations { get; }
     public IReadOnlyList<ReconstructionEvent> Events { get; }
     public IReadOnlyList<SourceDataIssue> SourceDataIssues { get; }
+    public MatchSummaryEvidence? MatchSummary { get; }
     public long AvailableFromMs => Observations[0].TimestampMs;
     public long AvailableToMs => Observations[^1].TimestampMs;
 

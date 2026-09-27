@@ -58,6 +58,22 @@ export type MetricValues = {
 };
 export type CombatEvent = { source: SourceEvent; timestampMs: number; killerParticipantId: number | null; victimParticipantId: number; assistingParticipantIds: number[]; position: Position | null };
 export type ObjectiveEvent = { source: SourceEvent; timestampMs: number; monsterType: string | null; monsterSubType: string | null; killerParticipantId: number | null; assistingParticipantIds: number[]; teamAttribution: TeamAttribution; position: Position | null };
+export type MatchFieldFact<T> = { value: T; source: { jsonPath: string } };
+export type MatchParticipantResult = {
+  participantId: number;
+  teamId: number;
+  won: MatchFieldFact<boolean>;
+  gameEndedInSurrender: MatchFieldFact<boolean> | null;
+  gameEndedInEarlySurrender: MatchFieldFact<boolean> | null;
+  nexusKills: MatchFieldFact<number> | null;
+  nexusTakedowns: MatchFieldFact<number> | null;
+  nexusLost: MatchFieldFact<number> | null;
+};
+export type ProgressionEvent =
+  | { kind: "buildingDestroyed"; source: SourceEvent; timestampMs: number; buildingType: string | null; towerType: string | null; laneType: string | null; structureOwnerTeam: TeamAttribution; killerParticipantId: number | null; assistingParticipantIds: number[]; position: Position | null }
+  | { kind: "riftHeraldKilled"; source: SourceEvent; timestampMs: number; killerParticipantId: number | null; teamAttribution: TeamAttribution; assistingParticipantIds: number[]; position: Position | null }
+  | { kind: "itemDestroyed"; source: SourceEvent; timestampMs: number; participantId: number | null; itemId: number }
+  | { kind: "gameEnded"; source: SourceEvent; timestampMs: number; winningTeam: TeamAttribution };
 export type Encounter = {
   id: string; startTimestampMs: number; endTimestampMs: number; recordedEventSpanMs: number;
   combatEventCount: number; participantIds: number[]; distinctParticipantCount: number;
@@ -84,6 +100,7 @@ export type ReviewWindow = {
   observations: Observation[];
   metricOmissions: { kind: MetricKind; reason: "counterRegression" }[];
   knowledgeAnnotations: KnowledgeAnnotation[];
+  progression: { containsGameEnd: boolean; events: ProgressionEvent[] };
   positionSamples: ReviewPositionSample[];
   encounters: Encounter[];
 };
@@ -93,8 +110,23 @@ export type MatchReview = {
   configuredParticipantId: number;
   participants: ReviewParticipant[];
   enemyResolution: { status: "resolved" | "missing" | "ambiguous"; participantId: number | null };
-  versions: { reconstruction: number; detector: number; factualObservations: number; knowledgeAnnotations: number; encounters: number };
+  versions: { reconstruction: number; detector: number; factualObservations: number; knowledgeAnnotations: number; encounters: number; progression: number };
   knowledge: { publicPatch: string | null; coverage: "available" | "unknownPatch" | "noPackForPatch" | "unsupportedMatch" };
+  progression: {
+    outcome: {
+      configuredParticipantId: number;
+      configuredTeamId: number;
+      configuredPlayerWon: MatchFieldFact<boolean> | null;
+      resolvedWinningTeamId: number | null;
+      reportedDurationSeconds: MatchFieldFact<number>;
+      matchEndTimestampMs: MatchFieldFact<number> | null;
+      endOfGameResult: MatchFieldFact<string> | null;
+      teamResults: { teamId: number; won: MatchFieldFact<boolean> }[];
+      participantResults: MatchParticipantResult[];
+      timelineGameEnd: Extract<ProgressionEvent, { kind: "gameEnded" }> | null;
+    };
+    events: ProgressionEvent[];
+  };
   sourceDataIssues: SourceDataIssue[];
   windows: ReviewWindow[];
 };

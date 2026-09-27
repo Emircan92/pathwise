@@ -46,7 +46,7 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = document.RootElement;
         Assert.Equal(
-            ["matchId", "mapId", "configuredParticipantId", "participants", "enemyResolution", "versions", "knowledge", "sourceDataIssues", "windows"],
+            ["matchId", "mapId", "configuredParticipantId", "participants", "enemyResolution", "versions", "knowledge", "progression", "sourceDataIssues", "windows"],
             root.EnumerateObject().Select(property => property.Name).ToArray());
         Assert.Equal("EUW1_1", root.GetProperty("matchId").GetString());
         Assert.Equal(11, root.GetProperty("mapId").GetInt32());
@@ -61,6 +61,7 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         Assert.Equal("26.18", root.GetProperty("knowledge").GetProperty("publicPatch").GetString());
         Assert.Equal("available", root.GetProperty("knowledge").GetProperty("coverage").GetString());
         Assert.Equal(1, root.GetProperty("versions").GetProperty("encounters").GetInt32());
+        Assert.Equal(1, root.GetProperty("versions").GetProperty("progression").GetInt32());
         Assert.Equal([3, 6, 2, 4, 4], root.GetProperty("windows").EnumerateArray()
             .Select(value => value.GetProperty("encounters").GetArrayLength()).ToArray());
 
@@ -107,6 +108,61 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ExposesTheProgressionCalibrationSequenceWithoutMergingCombatEncounters()
+    {
+        var response = await _client.GetAsync("/api/matches/EUW1_2/review");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadAsStringAsync();
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        var progression = root.GetProperty("progression");
+        var outcome = progression.GetProperty("outcome");
+        Assert.Equal(100, outcome.GetProperty("resolvedWinningTeamId").GetInt32());
+        Assert.True(outcome.GetProperty("configuredPlayerWon").GetProperty("value").GetBoolean());
+        Assert.Equal("match.info.participants[1].win", outcome.GetProperty("configuredPlayerWon").GetProperty("source").GetProperty("jsonPath").GetString());
+        Assert.Equal("GameComplete", outcome.GetProperty("endOfGameResult").GetProperty("value").GetString());
+        var configuredSummary = outcome.GetProperty("participantResults").EnumerateArray().Single(value =>
+            value.GetProperty("participantId").GetInt32() == 2);
+        Assert.Equal(1, configuredSummary.GetProperty("nexusKills").GetProperty("value").GetInt32());
+        Assert.Equal("match.info.participants[1].nexusKills", configuredSummary.GetProperty("nexusKills").GetProperty("source").GetProperty("jsonPath").GetString());
+
+        var matchEvents = progression.GetProperty("events").EnumerateArray().ToArray();
+        Assert.Contains(matchEvents, value => value.GetProperty("kind").GetString() == "riftHeraldKilled" && value.GetProperty("timestampMs").GetInt64() == 982_051);
+        Assert.Contains(matchEvents, value => value.GetProperty("kind").GetString() == "itemDestroyed" && value.GetProperty("itemId").GetInt32() == 3513);
+
+        var lateWindow = root.GetProperty("windows").EnumerateArray().Single(value =>
+            value.GetProperty("progression").GetProperty("containsGameEnd").GetBoolean());
+        var relevant = lateWindow.GetProperty("progression").GetProperty("events").EnumerateArray()
+            .Where(value => value.GetProperty("kind").GetString() == "gameEnded" ||
+                value.GetProperty("kind").GetString() == "buildingDestroyed" &&
+                value.GetProperty("structureOwnerTeam").GetProperty("resolvedTeamId").GetInt32() == 200)
+            .ToArray();
+        Assert.Equal(
+            ["buildingDestroyed", "buildingDestroyed", "buildingDestroyed", "buildingDestroyed", "buildingDestroyed", "buildingDestroyed", "gameEnded"],
+            relevant.Select(value => value.GetProperty("kind").GetString()!).ToArray());
+        Assert.Equal([1_206_286L, 1_213_961L, 1_221_794L, 1_228_277L, 1_257_369L, 1_264_618L, 1_286_891L],
+            relevant.Select(value => value.GetProperty("timestampMs").GetInt64()).ToArray());
+        Assert.Equal([(21, 3), (21, 7), (21, 15), (21, 20), (21, 45), (22, 0), (22, 11)],
+            relevant.Select(SourceEvent).ToArray());
+        Assert.Equal(2, lateWindow.GetProperty("encounters").GetArrayLength());
+
+        var dragon = root.GetProperty("windows").EnumerateArray()
+            .SelectMany(window => window.GetProperty("observations").EnumerateArray())
+            .Where(observation => observation.GetProperty("kind").GetString() == "eliteObjectiveContext")
+            .SelectMany(observation => observation.GetProperty("events").EnumerateArray())
+            .Single(value => value.GetProperty("timestampMs").GetInt64() == 1_054_897);
+        Assert.Equal(7, dragon.GetProperty("killerParticipantId").GetInt32());
+        Assert.Equal(200, dragon.GetProperty("teamAttribution").GetProperty("resolvedTeamId").GetInt32());
+        Assert.Contains(2, dragon.GetProperty("assistingParticipantIds").EnumerateArray().Select(value => value.GetInt32()));
+
+        Assert.DoesNotContain("summoned", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("charge", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("base siege", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("push to end", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Maps404ConflictAndUnprocessableFailures()
     {
         Assert.Equal(HttpStatusCode.NotFound, (await _client.GetAsync("/api/matches/OTHER/review")).StatusCode);
@@ -115,8 +171,8 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         {
             var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<PathwiseDbContext>>();
             await using var db = await factory.CreateDbContextAsync();
-            db.StoredMatches.Add(new() { MatchId = "EUW1_2", PlayerPuuid = "participant-2-puuid", Regional = "europe", DiscoveredAtUtc = DateTimeOffset.UtcNow, QueueId = 420, TeamPosition = "JUNGLE" });
-            db.MatchPayloads.AddRange(new MatchPayloadEntity { MatchId = "EUW1_2", Kind = PayloadKind.Match, State = PayloadState.Missing }, new MatchPayloadEntity { MatchId = "EUW1_2", Kind = PayloadKind.Timeline, State = PayloadState.Missing });
+            db.StoredMatches.Add(new() { MatchId = "EUW1_20", PlayerPuuid = "participant-2-puuid", Regional = "europe", DiscoveredAtUtc = DateTimeOffset.UtcNow, QueueId = 420, TeamPosition = "JUNGLE" });
+            db.MatchPayloads.AddRange(new MatchPayloadEntity { MatchId = "EUW1_20", Kind = PayloadKind.Match, State = PayloadState.Missing }, new MatchPayloadEntity { MatchId = "EUW1_20", Kind = PayloadKind.Timeline, State = PayloadState.Missing });
             var broken = Fixture("timeline.json").Replace("\"participantId\": 2", "\"participantId\": \"bad\"", StringComparison.Ordinal);
             db.StoredMatches.Add(new() { MatchId = "EUW1_3", PlayerPuuid = "participant-2-puuid", Regional = "europe", DiscoveredAtUtc = DateTimeOffset.UtcNow, QueueId = 420, TeamPosition = "JUNGLE" });
             db.MatchPayloads.AddRange(
@@ -125,7 +181,7 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
 
-        Assert.Equal(HttpStatusCode.Conflict, (await _client.GetAsync("/api/matches/EUW1_2/review")).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await _client.GetAsync("/api/matches/EUW1_20/review")).StatusCode);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, (await _client.GetAsync("/api/matches/EUW1_3/review")).StatusCode);
     }
 
@@ -165,13 +221,16 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
     {
         db.PlayerAccounts.Add(new() { Puuid = "participant-2-puuid", GameName = "Synthetic Player 2", TagLine = "P02", ConfiguredGameName = "Synthetic Player 2", ConfiguredTagLine = "P02", Platform = "euw1", Regional = "europe", ResolvedAtUtc = DateTimeOffset.UtcNow, RawJson = "{}" });
         db.StoredMatches.Add(new() { MatchId = "EUW1_1", PlayerPuuid = "participant-2-puuid", Regional = "europe", DiscoveredAtUtc = DateTimeOffset.UtcNow, QueueId = 420, ChampionName = "Khazix", TeamPosition = "JUNGLE", DurationSeconds = 1691 });
+        db.StoredMatches.Add(new() { MatchId = "EUW1_2", PlayerPuuid = "participant-2-puuid", Regional = "europe", DiscoveredAtUtc = DateTimeOffset.UtcNow, QueueId = 420, ChampionName = "Khazix", TeamPosition = "JUNGLE", DurationSeconds = 1286 });
         db.MatchPayloads.AddRange(
             new MatchPayloadEntity { MatchId = "EUW1_1", Kind = PayloadKind.Match, State = PayloadState.Stored, RawJson = Fixture("match.json"), RetrievedAtUtc = DateTimeOffset.Parse("2026-09-19T18:00:00Z") },
-            new MatchPayloadEntity { MatchId = "EUW1_1", Kind = PayloadKind.Timeline, State = PayloadState.Stored, RawJson = Fixture("timeline.json"), RetrievedAtUtc = DateTimeOffset.Parse("2026-09-19T18:00:01Z") });
+            new MatchPayloadEntity { MatchId = "EUW1_1", Kind = PayloadKind.Timeline, State = PayloadState.Stored, RawJson = Fixture("timeline.json"), RetrievedAtUtc = DateTimeOffset.Parse("2026-09-19T18:00:01Z") },
+            new MatchPayloadEntity { MatchId = "EUW1_2", Kind = PayloadKind.Match, State = PayloadState.Stored, RawJson = Fixture("Progression", "match.json"), RetrievedAtUtc = DateTimeOffset.Parse("2026-09-20T18:00:00Z") },
+            new MatchPayloadEntity { MatchId = "EUW1_2", Kind = PayloadKind.Timeline, State = PayloadState.Stored, RawJson = Fixture("Progression", "timeline.json"), RetrievedAtUtc = DateTimeOffset.Parse("2026-09-20T18:00:01Z") });
         await db.SaveChangesAsync();
     }
 
-    private static string Fixture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", name));
+    private static string Fixture(params string[] path) => File.ReadAllText(Path.Combine([AppContext.BaseDirectory, "Fixtures", .. path]));
 
     private sealed class TestFactory(string databasePath) : WebApplicationFactory<Program>
     {

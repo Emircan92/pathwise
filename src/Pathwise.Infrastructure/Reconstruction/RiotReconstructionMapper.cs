@@ -49,10 +49,13 @@ public sealed class RiotReconstructionMapper
         var durationSeconds = RequiredInt(matchInfo, "gameDuration", "game_duration_missing");
         var patch = RequiredString(matchInfo, "gameVersion", "game_version_missing");
         var participantsElement = RequiredArray(matchInfo, "participants", "participants_missing");
+        var participantElements = participantsElement.EnumerateArray().ToArray();
         var participants = new List<Participant>();
+        var participantResults = new List<MatchParticipantResultEvidence>();
         var puuidToParticipantId = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var element in participantsElement.EnumerateArray())
+        for (var participantIndex = 0; participantIndex < participantElements.Length; participantIndex++)
         {
+            var element = participantElements[participantIndex];
             if (element.ValueKind != JsonValueKind.Object)
                 throw Failure("participant_invalid", "A match participant record is not an object.");
 
@@ -63,16 +66,29 @@ public sealed class RiotReconstructionMapper
             if (!puuidToParticipantId.TryAdd(puuid, participantId))
                 throw Failure("duplicate_participant_linkage", "Participant PUUID linkage is duplicated.");
 
+            var teamId = RequiredInt(element, "teamId", "participant_team_missing");
+            var won = RequiredBool(element, "win", "participant_result_missing");
             participants.Add(new(
                 participantId,
-                RequiredInt(element, "teamId", "participant_team_missing"),
+                teamId,
                 RequiredInt(element, "championId", "participant_champion_missing"),
                 RequiredString(element, "championName", "participant_champion_missing"),
                 OptionalString(element, "teamPosition"),
-                RequiredBool(element, "win", "participant_result_missing"),
+                won,
                 RequiredInt(element, "kills", "participant_final_kda_missing"),
                 RequiredInt(element, "deaths", "participant_final_kda_missing"),
                 RequiredInt(element, "assists", "participant_final_kda_missing")));
+
+            var participantPath = $"match.info.participants[{participantIndex}]";
+            participantResults.Add(new(
+                participantId,
+                teamId,
+                new(won, new($"{participantPath}.win")),
+                OptionalMatchBool(element, "gameEndedInSurrender", participantPath),
+                OptionalMatchBool(element, "gameEndedInEarlySurrender", participantPath),
+                OptionalMatchInt(element, "nexusKills", participantPath),
+                OptionalMatchInt(element, "nexusTakedowns", participantPath),
+                OptionalMatchInt(element, "nexusLost", participantPath)));
         }
 
         if (!puuidToParticipantId.TryGetValue(configuredPlayerPuuid, out var configuredParticipantId))
@@ -131,6 +147,13 @@ public sealed class RiotReconstructionMapper
 
         var events = MapEvents(frames, observations[0].TimestampMs, observations[^1].TimestampMs, participants, issues);
         AddFinalKdaIssues(participants, events, issues);
+        var matchSummary = new MatchSummaryEvidence(
+            new(durationSeconds, new("match.info.gameDuration")),
+            OptionalMatchLong(matchInfo, "gameEndTimestamp", "match.info"),
+            OptionalMatchString(matchInfo, "endOfGameResult", "match.info"),
+            MapTeamResults(matchInfo),
+            participantResults);
+        AddOutcomeConflictIssues(matchSummary, events.OfType<GameEndEvent>().ToArray(), issues);
 
         return new(
             expectedMatchId,
@@ -143,7 +166,52 @@ public sealed class RiotReconstructionMapper
             enemyResolution,
             observations,
             events,
-            issues);
+            issues,
+            matchSummary);
+    }
+
+    private static IReadOnlyList<MatchTeamResultEvidence> MapTeamResults(JsonElement matchInfo)
+    {
+        if (!matchInfo.TryGetProperty("teams", out var teamsElement) || teamsElement.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var teams = teamsElement.EnumerateArray().ToArray();
+        var result = new List<MatchTeamResultEvidence>();
+        for (var teamIndex = 0; teamIndex < teams.Length; teamIndex++)
+        {
+            var team = teams[teamIndex];
+            if (!TryInt(team, "teamId", out var teamId) ||
+                !team.TryGetProperty("win", out var wonElement) ||
+                wonElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                continue;
+            result.Add(new(teamId, new(wonElement.GetBoolean(), new($"match.info.teams[{teamIndex}].win"))));
+        }
+        return result;
+    }
+
+    private static void AddOutcomeConflictIssues(
+        MatchSummaryEvidence summary,
+        IReadOnlyList<GameEndEvent> gameEnds,
+        List<SourceDataIssue> issues)
+    {
+        var winnerClaims = summary.TeamResults.Where(value => value.Won.Value).Select(value => value.TeamId)
+            .Concat(summary.ParticipantResults.Where(value => value.Won.Value).Select(value => value.TeamId))
+            .Concat(gameEnds.Select(value => value.WinningTeam.ResolvedTeamId).OfType<int>())
+            .Distinct()
+            .ToArray();
+        var participantTeamConflicts = summary.ParticipantResults
+            .GroupBy(value => value.TeamId)
+            .Any(group => group.Select(value => value.Won.Value).Distinct().Count() > 1);
+        var timelineWinners = gameEnds.Select(value => value.WinningTeam.ResolvedTeamId).OfType<int>().Distinct().ToArray();
+
+        if (winnerClaims.Length <= 1 && !participantTeamConflicts && timelineWinners.Length <= 1)
+            return;
+
+        issues.Add(new(
+            "match_outcome_conflict",
+            "match.info.teams, match.info.participants, timeline.info.frames",
+            "Match-V5 result fields and Timeline-V5 GAME_END do not establish one consistent winning team.",
+            "source claims retained; resolved winner omitted"));
     }
 
     private static PlayerObservation MapObservation(
@@ -346,7 +414,8 @@ public sealed class RiotReconstructionMapper
         bool isPlate)
     {
         var sourceText = SourceText(source);
-        var killerId = OptionalEventInt(element, "killerId", sourceText, issues);
+        var reportedKillerId = OptionalEventInt(element, "killerId", sourceText, issues);
+        var killerId = reportedKillerId is > 0 ? reportedKillerId : null;
         var killer = killerId is null ? null : participants.SingleOrDefault(x => x.ParticipantId == killerId);
         var killerTeam = killer is null
             ? new TeamAttribution(TeamAttributionKind.Unknown, null, null, "Killer is absent or is not a known participant.")
@@ -527,6 +596,26 @@ public sealed class RiotReconstructionMapper
 
     private static string? OptionalString(JsonElement parent, string property) =>
         parent.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private static MatchFieldFact<bool>? OptionalMatchBool(JsonElement parent, string property, string parentPath) =>
+        parent.TryGetProperty(property, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? new(value.GetBoolean(), new($"{parentPath}.{property}"))
+            : null;
+
+    private static MatchFieldFact<int>? OptionalMatchInt(JsonElement parent, string property, string parentPath) =>
+        TryInt(parent, property, out var value)
+            ? new(value, new($"{parentPath}.{property}"))
+            : null;
+
+    private static MatchFieldFact<long>? OptionalMatchLong(JsonElement parent, string property, string parentPath) =>
+        TryLong(parent, property, out var value)
+            ? new(value, new($"{parentPath}.{property}"))
+            : null;
+
+    private static MatchFieldFact<string>? OptionalMatchString(JsonElement parent, string property, string parentPath) =>
+        parent.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(value.GetString())
+            ? new(value.GetString()!, new($"{parentPath}.{property}"))
+            : null;
 
     private static bool TryInt(JsonElement parent, string property, out int value)
     {

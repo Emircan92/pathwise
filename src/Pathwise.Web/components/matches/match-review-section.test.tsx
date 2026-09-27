@@ -193,6 +193,39 @@ describe("hierarchical match review", () => {
     expect(screen.getByText("Signal types: Gold difference change, XP difference change")).toBeInTheDocument();
   });
 
+  it("renders recorded progression as factual window evidence without narrative labels", () => {
+    render(<MatchReviewContent review={representativeReview()} />);
+
+    const progression = screen.getByRole("region", { name: "Recorded progression" });
+    expect(progression).toHaveTextContent("25:00.000");
+    expect(progression).toHaveTextContent("Enemy mid base turret was destroyed.");
+    expect(progression).toHaveTextContent("Frame 25, event 20");
+    expect(progression).not.toHaveTextContent(/base siege|Herald push|push to end|conversion|intent|strategic quality/i);
+  });
+
+  it("selects structure progression through the shared map inspector without assigning it to an encounter", () => {
+    render(<MatchReviewContent review={representativeReview()} />);
+    const progression = screen.getByRole("region", { name: "Recorded progression" });
+    const event = within(progression).getByRole("button", { name: /Enemy mid base turret was destroyed.*25:00\.000.*Recorded map location/ });
+
+    fireEvent.click(event);
+
+    expect(screen.getByRole("button", { name: "Window overview" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Encounter 1 · 23:45.000" })).toHaveAttribute("aria-pressed", "false");
+    expect(event).toHaveAttribute("aria-pressed", "true");
+    const inspector = screen.getByLabelText("Synchronized evidence inspector");
+    const marker = within(inspector).getByRole("button", { name: "Enemy mid base turret was destroyed, 25:00.000, recorded event" });
+    expect(marker).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Current review scope")).toHaveTextContent("Window overview");
+    expect(screen.getByLabelText("Current review scope")).toHaveTextContent("Enemy mid base turret was destroyed");
+    expect(screen.getByLabelText("Structures")).toBeChecked();
+
+    const map = screen.getByLabelText("Interactive Summoner's Rift map");
+    vi.spyOn(map, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 600, height: 600, right: 600, bottom: 600, x: 0, y: 0, toJSON: () => ({}) });
+    fireEvent.click(screen.getByRole("button", { name: "Focus selected evidence" }));
+    expect(map).toHaveAttribute("data-zoom", "2.50");
+  });
+
   it("handles partial coverage and unresolved enemy state without invented values", () => {
     const review = representativeReview();
     review.enemyResolution = { status: "ambiguous", participantId: null };
@@ -293,6 +326,37 @@ describe("spatial evidence semantics", () => {
     expect(simultaneous.map((entry) => entry.layer)).toEqual(["you", "enemy", "combat", "objectives", "objectives"]);
     expect(new Set(simultaneous.map((entry) => entry.id)).size).toBe(5);
   });
+
+  it("adds structure positions only to window overview and uses player-relative team labels", () => {
+    const review = representativeReview();
+    const period = review.windows[0];
+    const overview = buildSpatialEvidence(review, period);
+    const structure = overview.find((entry) => entry.layer === "progression");
+
+    expect(structure).toMatchObject({
+      id: `${period.requestedStartTimestampMs}-${period.requestedEndTimestampMs}:progression:25:20`,
+      label: "Enemy mid base turret was destroyed",
+      position: { x: 11_000, y: 11_000 },
+      kind: "event",
+    });
+    expect(buildSpatialEvidence(review, period, period.encounters[0])).not.toContainEqual(expect.objectContaining({ layer: "progression" }));
+
+    const building = period.progression.events[0];
+    if (building.kind !== "buildingDestroyed") throw new Error("Test fixture lacks a structure event");
+    building.structureOwnerTeam = { kind: "KnownTeam", suppliedTeamId: 100, resolvedTeamId: 100, diagnosticReason: null };
+    expect(buildSpatialEvidence(review, period).find((entry) => entry.layer === "progression")?.label).toBe("Your mid base turret was destroyed");
+
+    building.structureOwnerTeam = { kind: "KnownTeam", suppliedTeamId: 200, resolvedTeamId: 200, diagnosticReason: null };
+    building.buildingType = "INHIBITOR_BUILDING";
+    building.towerType = null;
+    building.laneType = "TOP_LANE";
+    expect(buildSpatialEvidence(review, period).find((entry) => entry.layer === "progression")?.label).toBe("Enemy top inhibitor was destroyed");
+
+    building.buildingType = "TOWER_BUILDING";
+    building.towerType = "NEXUS_TURRET";
+    building.laneType = "MID_LANE";
+    expect(buildSpatialEvidence(review, period).find((entry) => entry.layer === "progression")?.label).toBe("Enemy Nexus turret was destroyed");
+  });
 });
 
 describe("match review request lifecycle", () => {
@@ -348,8 +412,20 @@ function representativeReview(): MatchReview {
     matchId: "EUW1_1", mapId: 11, configuredParticipantId: 2,
     participants: [{ participantId: 2, championName: "Khazix", teamId: 100 }, { participantId: 7, championName: "Belveth", teamId: 200 }, { participantId: 8, championName: "Annie", teamId: 200 }],
     enemyResolution: { status: "resolved", participantId: 7 },
-    versions: { reconstruction: 1, detector: 2, factualObservations: 1, knowledgeAnnotations: 1, encounters: 1 },
-    knowledge: { publicPatch: "26.18", coverage: "available" }, sourceDataIssues: [],
+    versions: { reconstruction: 1, detector: 2, factualObservations: 1, knowledgeAnnotations: 1, encounters: 1, progression: 1 },
+    knowledge: { publicPatch: "26.18", coverage: "available" },
+    progression: {
+      outcome: {
+        configuredParticipantId: 2, configuredTeamId: 100,
+        configuredPlayerWon: { value: false, source: { jsonPath: "match.info.participants[1].win" } },
+        resolvedWinningTeamId: 200,
+        reportedDurationSeconds: { value: 1691, source: { jsonPath: "match.info.gameDuration" } },
+        matchEndTimestampMs: null, endOfGameResult: null,
+        teamResults: [], participantResults: [], timelineGameEnd: null,
+      },
+      events: [],
+    },
+    sourceDataIssues: [],
     windows: [
       {
         requestedStartTimestampMs: 1_421_654, requestedEndTimestampMs: 1_620_500,
@@ -363,6 +439,7 @@ function representativeReview(): MatchReview {
           { kind: "eliteObjectiveContext", events: [dragon, baron] },
         ],
         metricOmissions: [],
+        progression: { containsGameEnd: false, events: [{ kind: "buildingDestroyed", source: { frameIndex: 25, eventIndex: 20 }, timestampMs: 1_500_000, buildingType: "TOWER_BUILDING", towerType: "BASE_TURRET", laneType: "MID_LANE", structureOwnerTeam: { kind: "KnownTeam", suppliedTeamId: 200, resolvedTeamId: 200, diagnosticReason: null }, killerParticipantId: 2, assistingParticipantIds: [], position: { x: 11_000, y: 11_000 } }] },
         positionSamples: [
           { frameIndex: 23, timestampMs: 1_380_440, configuredPlayerPosition: { x: 7443, y: 3036 }, enemyJunglerPosition: { x: 9665, y: 5278 } },
           { frameIndex: 24, timestampMs: 1_440_464, configuredPlayerPosition: { x: 463, y: 692 }, enemyJunglerPosition: { x: 11226, y: 6934 } },
@@ -382,6 +459,7 @@ function representativeReview(): MatchReview {
         requestedStartTimestampMs: 300_000, requestedEndTimestampMs: 360_000,
         startFrame: { frameIndex: 5, timestampMs: 300_000 }, endFrame: { frameIndex: 6, timestampMs: 360_000 },
         selectionRank: 2, primarySelectionReason: "configuredPlayerDeath", signalKinds: ["configuredPlayerDeath"], absorbedSignalKinds: [], observations: [], metricOmissions: [],
+        progression: { containsGameEnd: false, events: [] },
         positionSamples: [{ frameIndex: 5, timestampMs: 300_000, configuredPlayerPosition: null, enemyJunglerPosition: null }, { frameIndex: 6, timestampMs: 360_000, configuredPlayerPosition: null, enemyJunglerPosition: null }],
         knowledgeAnnotations: [{ kind: "nearInitialSpawn", fact: elementalFact, target: { observationKind: null, event: null }, recordedKillTimestampMs: null }], encounters: [],
       },

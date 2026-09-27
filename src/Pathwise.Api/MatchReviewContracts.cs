@@ -4,6 +4,7 @@ using Pathwise.Application.ReviewWindows;
 using Pathwise.Domain.FactualObservations;
 using Pathwise.Domain.Encounters;
 using Pathwise.Domain.Knowledge;
+using Pathwise.Domain.Progression;
 using Pathwise.Domain.Reconstruction;
 using Pathwise.Domain.ReviewWindows;
 
@@ -17,6 +18,7 @@ public sealed record MatchReviewResponse(
     EnemyResolutionDto EnemyResolution,
     MatchReviewVersionsDto Versions,
     MatchReviewKnowledgeDto Knowledge,
+    MatchProgressionDto Progression,
     IReadOnlyList<SourceDataIssueDto> SourceDataIssues,
     IReadOnlyList<ReviewWindowDto> Windows);
 
@@ -25,7 +27,8 @@ public sealed record MatchReviewVersionsDto(
     int Detector,
     int FactualObservations,
     int KnowledgeAnnotations,
-    int Encounters);
+    int Encounters,
+    int Progression);
 
 public sealed record MatchReviewKnowledgeDto(string? PublicPatch, string Coverage);
 public sealed record SourceFrameDto(int FrameIndex, long TimestampMs);
@@ -44,8 +47,79 @@ public sealed record ReviewWindowDto(
     IReadOnlyList<ObservationDto> Observations,
     IReadOnlyList<MetricOmissionDto> MetricOmissions,
     IReadOnlyList<KnowledgeAnnotationDto> KnowledgeAnnotations,
+    WindowProgressionDto Progression,
     IReadOnlyList<ReviewPositionSampleDto> PositionSamples,
     IReadOnlyList<EncounterDto> Encounters);
+
+public sealed record MatchFieldReferenceDto(string JsonPath);
+public sealed record MatchFieldFactDto<T>(T Value, MatchFieldReferenceDto Source);
+public sealed record MatchTeamResultDto(int TeamId, MatchFieldFactDto<bool> Won);
+public sealed record MatchParticipantResultDto(
+    int ParticipantId,
+    int TeamId,
+    MatchFieldFactDto<bool> Won,
+    MatchFieldFactDto<bool>? GameEndedInSurrender,
+    MatchFieldFactDto<bool>? GameEndedInEarlySurrender,
+    MatchFieldFactDto<int>? NexusKills,
+    MatchFieldFactDto<int>? NexusTakedowns,
+    MatchFieldFactDto<int>? NexusLost);
+
+public sealed record ProgressionOutcomeDto(
+    int ConfiguredParticipantId,
+    int ConfiguredTeamId,
+    MatchFieldFactDto<bool>? ConfiguredPlayerWon,
+    int? ResolvedWinningTeamId,
+    MatchFieldFactDto<int> ReportedDurationSeconds,
+    MatchFieldFactDto<long>? MatchEndTimestampMs,
+    MatchFieldFactDto<string>? EndOfGameResult,
+    IReadOnlyList<MatchTeamResultDto> TeamResults,
+    IReadOnlyList<MatchParticipantResultDto> ParticipantResults,
+    GameEndedProgressionEventDto? TimelineGameEnd);
+
+public sealed record MatchProgressionDto(
+    ProgressionOutcomeDto Outcome,
+    IReadOnlyList<ProgressionEventDto> Events);
+
+public sealed record WindowProgressionDto(
+    bool ContainsGameEnd,
+    IReadOnlyList<ProgressionEventDto> Events);
+
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(BuildingDestroyedProgressionEventDto), "buildingDestroyed")]
+[JsonDerivedType(typeof(RiftHeraldKilledProgressionEventDto), "riftHeraldKilled")]
+[JsonDerivedType(typeof(ItemDestroyedProgressionEventDto), "itemDestroyed")]
+[JsonDerivedType(typeof(GameEndedProgressionEventDto), "gameEnded")]
+public abstract record ProgressionEventDto(SourceEventReferenceDto Source, long TimestampMs);
+
+public sealed record BuildingDestroyedProgressionEventDto(
+    SourceEventReferenceDto Source,
+    long TimestampMs,
+    string? BuildingType,
+    string? TowerType,
+    string? LaneType,
+    TeamAttributionDto StructureOwnerTeam,
+    int? KillerParticipantId,
+    IReadOnlyList<int> AssistingParticipantIds,
+    PositionDto? Position) : ProgressionEventDto(Source, TimestampMs);
+
+public sealed record RiftHeraldKilledProgressionEventDto(
+    SourceEventReferenceDto Source,
+    long TimestampMs,
+    int? KillerParticipantId,
+    TeamAttributionDto TeamAttribution,
+    IReadOnlyList<int> AssistingParticipantIds,
+    PositionDto? Position) : ProgressionEventDto(Source, TimestampMs);
+
+public sealed record ItemDestroyedProgressionEventDto(
+    SourceEventReferenceDto Source,
+    long TimestampMs,
+    int? ParticipantId,
+    int ItemId) : ProgressionEventDto(Source, TimestampMs);
+
+public sealed record GameEndedProgressionEventDto(
+    SourceEventReferenceDto Source,
+    long TimestampMs,
+    TeamAttributionDto WinningTeam) : ProgressionEventDto(Source, TimestampMs);
 
 public sealed record EncounterPlayerSummaryDto(bool Involved, int Kills, int Deaths, int Assists, int DistinctEventCount);
 public sealed record EncounterDto(
@@ -158,6 +232,7 @@ public static class MatchReviewApiMapper
         var review = result.Value;
         var observationsByWindow = review.FactualObservations.Windows.ToDictionary(window => window.Window);
         var encountersByWindow = review.Encounters.Windows.ToDictionary(window => window.Window);
+        var progressionByWindow = review.Progression.Windows.ToDictionary(window => window.Window);
         var annotationsByWindow = review.KnowledgeAnnotations.Annotations
             .GroupBy(annotation => annotation.Target.Window)
             .ToDictionary(group => group.Key, group => (IReadOnlyList<KnowledgeAnnotation>)group.ToArray());
@@ -175,7 +250,9 @@ public static class MatchReviewApiMapper
                 throw new InvalidOperationException("A selected review window has no matching position samples.");
             if (!encountersByWindow.TryGetValue(key, out var encounters))
                 throw new InvalidOperationException("A selected review window has no matching encounter result.");
-            return MapWindow(candidate, factual, annotations ?? [], factsById, positionSamples, encounters.Encounters);
+            if (!progressionByWindow.TryGetValue(candidate, out var progression))
+                throw new InvalidOperationException("A selected review window has no matching progression result.");
+            return MapWindow(candidate, factual, annotations ?? [], factsById, progression, positionSamples, encounters.Encounters);
         }).ToArray();
 
         var patch = review.KnowledgeAnnotations.PatchResolution.Patch;
@@ -191,8 +268,10 @@ public static class MatchReviewApiMapper
                 review.WindowDetection.DetectorVersion,
                 review.FactualObservations.GeneratorVersion,
                 review.KnowledgeAnnotations.GeneratorVersion,
-                review.Encounters.DetectorVersion),
+                review.Encounters.DetectorVersion,
+                review.Progression.ProjectorVersion),
             new(patch is null ? null : $"{patch.Major}.{patch.Minor}", Camel(review.KnowledgeAnnotations.Coverage)),
+            Progression(review.Progression),
             review.WindowDetection.SourceIssues.Select(Issue).ToArray(),
             windows);
     }
@@ -202,6 +281,7 @@ public static class MatchReviewApiMapper
         WindowFactualObservations factual,
         IReadOnlyList<KnowledgeAnnotation> annotations,
         IReadOnlyDictionary<string, ObjectiveInitialSpawnFact> factsById,
+        WindowProgressionEvidence progression,
         IReadOnlyList<ReviewPositionSample> positionSamples,
         IReadOnlyList<Encounter> encounters) => new(
             candidate.RequestedStartTimestampMs,
@@ -215,9 +295,59 @@ public static class MatchReviewApiMapper
             factual.Observations.Select(Observation).ToArray(),
             factual.Omissions.Select(omission => new MetricOmissionDto(Camel(omission.Kind), "counterRegression")).ToArray(),
             annotations.Select(annotation => Annotation(annotation, factsById)).ToArray(),
+            new(progression.ContainsGameEnd, progression.Events.Select(ProgressionEvent).ToArray()),
             positionSamples.Select(sample => new ReviewPositionSampleDto(sample.FrameIndex, sample.TimestampMs,
                 Position(sample.ConfiguredPlayerPosition), Position(sample.EnemyJunglerPosition))).ToArray(),
             encounters.Select(Encounter).ToArray());
+
+    private static MatchProgressionDto Progression(ProgressionEvidenceResult value) => new(
+        new(
+            value.Outcome.ConfiguredParticipantId,
+            value.Outcome.ConfiguredTeamId,
+            OptionalFact(value.Outcome.ConfiguredPlayerWon),
+            value.Outcome.ResolvedWinningTeamId,
+            Fact(value.Outcome.ReportedDurationSeconds),
+            OptionalFact(value.Outcome.MatchEndTimestampMs),
+            OptionalFact(value.Outcome.EndOfGameResult),
+            value.Outcome.TeamResults.Select(team => new MatchTeamResultDto(team.TeamId, Fact(team.Won))).ToArray(),
+            value.Outcome.ParticipantResults.Select(participant => new MatchParticipantResultDto(
+                participant.ParticipantId,
+                participant.TeamId,
+                Fact(participant.Won),
+                OptionalFact(participant.GameEndedInSurrender),
+                OptionalFact(participant.GameEndedInEarlySurrender),
+                OptionalFact(participant.NexusKills),
+                OptionalFact(participant.NexusTakedowns),
+                OptionalFact(participant.NexusLost))).ToArray(),
+            value.Outcome.TimelineGameEnd is null
+                ? null
+                : (GameEndedProgressionEventDto)ProgressionEvent(value.Outcome.TimelineGameEnd)),
+        value.Events.Select(ProgressionEvent).ToArray());
+
+    private static ProgressionEventDto ProgressionEvent(ProgressionEvent value) => value switch
+    {
+        BuildingDestroyedProgressionEvent building => new BuildingDestroyedProgressionEventDto(
+            Source(building.Source), building.TimestampMs, building.BuildingType, building.TowerType,
+            building.LaneType, Team(building.StructureOwnerTeam), building.KillerParticipantId,
+            building.AssistingParticipantIds, Position(building.Position)),
+        RiftHeraldKilledProgressionEvent herald => new RiftHeraldKilledProgressionEventDto(
+            Source(herald.Source), herald.TimestampMs, herald.KillerParticipantId,
+            Team(herald.TeamAttribution), herald.AssistingParticipantIds, Position(herald.Position)),
+        ItemDestroyedProgressionEvent item => new ItemDestroyedProgressionEventDto(
+            Source(item.Source), item.TimestampMs, item.ParticipantId, item.ItemId),
+        GameEndedProgressionEvent gameEnd => new GameEndedProgressionEventDto(
+            Source(gameEnd.Source), gameEnd.TimestampMs, Team(gameEnd.WinningTeam)),
+        _ => throw new InvalidOperationException($"Unsupported progression event {value.GetType().Name}.")
+    };
+
+    private static MatchFieldFactDto<T> Fact<T>(MatchFieldFact<T> value) =>
+        new(value.Value, new(value.Source.JsonPath));
+
+    private static MatchFieldFactDto<T>? OptionalFact<T>(MatchFieldFact<T>? value) where T : struct =>
+        value is null ? null : Fact(value);
+
+    private static MatchFieldFactDto<string>? OptionalFact(MatchFieldFact<string>? value) =>
+        value is null ? null : Fact(value);
 
     private static EncounterDto Encounter(Encounter value) => new(
         value.Id, value.StartTimestampMs, value.EndTimestampMs, value.RecordedEventSpanMs,

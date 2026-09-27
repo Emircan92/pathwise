@@ -6,8 +6,12 @@ import { Button } from "@/components/ui/button";
 import { ReviewWindowMap } from "./review-window-map";
 import {
   buildSpatialEvidence,
+  buildingDestroyedLabel,
   initialSpatialEvidence,
+  progressionSpatialEvidenceId,
+  recordedPositionStatus,
   spatialEvidenceLocationStatus,
+  teamPresentation,
   type EvidenceLayer,
   type SpatialEvidence,
 } from "./spatial-evidence";
@@ -19,6 +23,7 @@ import {
   type MetricKind,
   type ObjectiveEvent,
   type Observation,
+  type ProgressionEvent,
   type ReviewWindow,
   type SelectionReason,
   type SignalKind,
@@ -48,7 +53,7 @@ const signalLabels: Record<SignalKind, string> = {
   eliteMonsterKill: "Elite monster kill",
 };
 
-const defaultLayers: Record<EvidenceLayer, boolean> = { you: true, enemy: true, combat: true, objectives: true };
+const defaultLayers: Record<EvidenceLayer, boolean> = { you: true, enemy: true, combat: true, objectives: true, progression: true };
 
 export function MatchReviewSection({ matchId, matchDurationMs }: { matchId: string; matchDurationMs?: number | null }) {
   const [attempt, setAttempt] = useState(0);
@@ -136,6 +141,17 @@ export function MatchReviewContent({ review, matchDurationMs }: { review: MatchR
     selectEvidence(id);
   }
 
+  function selectProgressionEvidence(id: string) {
+    if (!selectedWindow) return;
+    const evidence = buildSpatialEvidence(review, selectedWindow, null).find((entry) => entry.id === id);
+    if (!evidence) return;
+    setEncounterId(null);
+    if (!enabledLayers[evidence.layer]) {
+      setEnabledLayers((current) => ({ ...current, [evidence.layer]: true }));
+    }
+    setSelectedEvidenceId(id);
+  }
+
   function toggleLayer(layer: EvidenceLayer) {
     if (enabledLayers[layer] && activeEvidence?.layer === layer) setSelectedEvidenceId(null);
     setEnabledLayers((current) => ({ ...current, [layer]: !current[layer] }));
@@ -155,7 +171,7 @@ export function MatchReviewContent({ review, matchDurationMs }: { review: MatchR
         <article className="rounded-xl border bg-card p-4 sm:p-6">
           <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.12fr)_minmax(22rem,0.88fr)] xl:gap-8">
             <div className="min-w-0">
-              <PeriodContext window={selectedWindow} review={review} />
+              <PeriodContext window={selectedWindow} review={review} activeEvidenceId={activeEvidenceId} onSelectProgression={selectProgressionEvidence} />
               <EncounterChapters
                 encounters={encounters}
                 review={review}
@@ -226,7 +242,12 @@ function PeriodNavigator({ windows, selectedIndex, matchDurationMs, onSelect }: 
   </nav>;
 }
 
-function PeriodContext({ window, review }: { window: ReviewWindow; review: MatchReview }) {
+function PeriodContext({ window, review, activeEvidenceId, onSelectProgression }: {
+  window: ReviewWindow;
+  review: MatchReview;
+  activeEvidenceId: string | null;
+  onSelectProgression: (id: string) => void;
+}) {
   const metrics = window.observations.filter(isMetricObservation);
   const combat = window.observations.find((observation) => observation.kind === "configuredPlayerCombat");
   const objectives = window.observations.find((observation) => observation.kind === "eliteObjectiveContext");
@@ -246,8 +267,58 @@ function PeriodContext({ window, review }: { window: ReviewWindow; review: Match
         {window.metricOmissions.map((omission) => <p key={omission.kind} className="rounded-md bg-warning/10 px-3 py-2 text-xs text-warning">{metricLabels[omission.kind]} was omitted because the source counters were inconsistent.</p>)}
       </div>
     </div>
+    {window.progression.events.length > 0 ? <ProgressionContext events={window.progression.events} review={review} window={window} activeEvidenceId={activeEvidenceId} onSelect={onSelectProgression} /> : null}
     {review.knowledge.coverage === "available" ? <KnowledgeContext annotations={window.knowledgeAnnotations} objectives={objectives?.kind === "eliteObjectiveContext" ? objectives.events : []} patch={review.knowledge.publicPatch} /> : null}
   </section>;
+}
+
+function ProgressionContext({ events, review, window, activeEvidenceId, onSelect }: {
+  events: ProgressionEvent[];
+  review: MatchReview;
+  window: ReviewWindow;
+  activeEvidenceId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return <section aria-labelledby="progression-heading" className="mt-4 rounded-lg border bg-muted/10 p-4">
+    <h4 id="progression-heading" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Recorded progression</h4>
+    <ol aria-label="Recorded progression events" className="mt-3 space-y-2">
+      {events.map((event) => {
+        const label = progressionLabel(event, review);
+        const id = event.kind === "buildingDestroyed" ? progressionSpatialEvidenceId(window, event) : null;
+        const positionStatus = event.kind === "buildingDestroyed" ? recordedPositionStatus(event.position) : null;
+        const content = <>
+          <span className="w-20 shrink-0 tabular-nums text-muted-foreground">{formatMatchTime(event.timestampMs, true)}</span>
+          <span><span>{label}</span><span className="block text-xs text-muted-foreground">Frame {event.source.frameIndex}, event {event.source.eventIndex}{positionStatus ? ` · ${positionStatus}` : ""}</span></span>
+        </>;
+        return <li key={`${event.source.frameIndex}-${event.source.eventIndex}`} className="text-sm">
+          {id && positionStatus ? <button type="button" aria-label={`${label}, ${formatMatchTime(event.timestampMs, true)}, ${positionStatus}`} aria-pressed={activeEvidenceId === id} onClick={() => onSelect(id)}
+            className={`flex w-full items-start gap-3 rounded-md px-2 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-ring ${activeEvidenceId === id ? "bg-primary/15" : "hover:bg-muted/50"}`}>{content}</button>
+            : <div className="flex items-start gap-3 px-2 py-1.5">{content}</div>}
+        </li>;
+      })}
+    </ol>
+  </section>;
+}
+
+function progressionLabel(event: ProgressionEvent, review: MatchReview) {
+  const participantName = (participantId: number | null) =>
+    participantId === null ? null : review.participants.find((value) => value.participantId === participantId)?.championName ?? `Participant ${participantId}`;
+  switch (event.kind) {
+    case "buildingDestroyed": return `${buildingDestroyedLabel(review, event)}.`;
+    case "riftHeraldKilled": {
+      const killer = participantName(event.killerParticipantId);
+      const attributedTeam = teamPresentation(review, event.teamAttribution);
+      return `Rift Herald was killed${killer ? ` by ${killer}` : ""}; attributed to ${lowercaseFirst(attributedTeam)}.`;
+    }
+    case "itemDestroyed": {
+      const participant = participantName(event.participantId);
+      return `Item ${event.itemId} destruction was recorded${participant ? ` for ${participant}` : ""}.`;
+    }
+    case "gameEnded": {
+      const winner = teamPresentation(review, event.winningTeam);
+      return winner === "Unknown team" ? "Match ended; winning team unavailable." : `Match ended; ${lowercaseFirst(winner)} won.`;
+    }
+  }
 }
 
 function EncounterChapters({ encounters, review, window, selectedEncounter, activeEvidenceId, onSelectEncounter, onSelectEvidence }: {
@@ -384,5 +455,6 @@ export function formatMatchTime(timestampMs: number, exact = false) { const floo
 export function formatSigned(value: number) { return value > 0 ? `+${formatNumber(value)}` : value < 0 ? `−${formatNumber(Math.abs(value))}` : "0"; }
 function formatNumber(value: number) { return new Intl.NumberFormat("en-US").format(value); }
 function formatCount(value: number, singular: string) { return `${value} ${singular}${value === 1 ? "" : "s"}`; }
+function lowercaseFirst(value: string) { return value.length === 0 ? value : value[0].toLowerCase() + value.slice(1); }
 function knowledgeObjectiveName(objective: "elementalDragon" | "baronNashor") { return objective === "elementalDragon" ? "Elemental Dragon" : "Baron Nashor"; }
 export function objectiveName(event: ObjectiveEvent) { if (event.monsterType === "BARON_NASHOR") return "Baron Nashor"; const subtype = event.monsterSubType ?? event.monsterType ?? "Unknown objective"; const names: Record<string, string> = { AIR_DRAGON: "Cloud Dragon", EARTH_DRAGON: "Mountain Dragon", FIRE_DRAGON: "Infernal Dragon", WATER_DRAGON: "Ocean Dragon", HEXTECH_DRAGON: "Hextech Dragon", CHEMTECH_DRAGON: "Chemtech Dragon", ELDER_DRAGON: "Elder Dragon" }; return names[subtype] ?? subtype; }

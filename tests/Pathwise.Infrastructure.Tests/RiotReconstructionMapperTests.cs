@@ -362,6 +362,100 @@ public sealed class RiotReconstructionMapperTests
     }
 
     [Fact]
+    public void BuildingKillPreservesNullableFieldsAndTreatsZeroKillerAsAbsent()
+    {
+        var (match, timeline) = FixtureJson();
+        var root = JsonNode.Parse(timeline)!.AsObject();
+        var building = Events(root).First(value => value?["type"]?.GetValue<string>() == "BUILDING_KILL")!.AsObject();
+        building["killerId"] = 0;
+        building.Remove("towerType");
+        building.Remove("laneType");
+
+        var reconstruction = new GameReconstruction(_mapper.Map(match, root.ToJsonString(), MatchId, ConfiguredPuuid));
+        var mapped = reconstruction.Events.OfType<StructureKillEvent>().Single(value =>
+            value.SourceType == "BUILDING_KILL" && value.TimestampMs == building["timestamp"]!.GetValue<long>());
+
+        Assert.Null(mapped.KillerParticipantId);
+        Assert.Null(mapped.TowerType);
+        Assert.Null(mapped.Lane);
+        Assert.Equal(TeamAttributionKind.Unknown, mapped.KillerTeamAttribution.Kind);
+        Assert.Equal(building["teamId"]!.GetValue<int>(), mapped.OwningTeam.ResolvedTeamId);
+
+        root = JsonNode.Parse(timeline)!.AsObject();
+        building = Events(root).First(value => value?["type"]?.GetValue<string>() == "BUILDING_KILL")!.AsObject();
+        var timestamp = building["timestamp"]!.GetValue<long>();
+        building.Remove("killerId");
+        reconstruction = new GameReconstruction(_mapper.Map(match, root.ToJsonString(), MatchId, ConfiguredPuuid));
+        Assert.Null(reconstruction.Events.OfType<StructureKillEvent>().Single(value =>
+            value.SourceType == "BUILDING_KILL" && value.TimestampMs == timestamp).KillerParticipantId);
+    }
+
+    [Fact]
+    public void MatchSummaryPreservesSurrenderAndNexusFactsWithoutInventingDestruction()
+    {
+        var (match, timeline) = FixtureJson();
+        var root = JsonNode.Parse(match)!.AsObject();
+        foreach (var participant in root["info"]!["participants"]!.AsArray())
+        {
+            participant!["gameEndedInSurrender"] = true;
+            participant["nexusKills"] = 0;
+            participant["nexusTakedowns"] = 0;
+            participant["nexusLost"] = 0;
+        }
+
+        var timelineRoot = JsonNode.Parse(timeline)!.AsObject();
+        foreach (var frame in timelineRoot["info"]!["frames"]!.AsArray())
+        {
+            var events = frame!["events"]!.AsArray();
+            for (var index = events.Count - 1; index >= 0; index--)
+                if (events[index]?["type"]?.GetValue<string>() == "GAME_END") events.RemoveAt(index);
+        }
+
+        var reconstruction = new GameReconstruction(_mapper.Map(root.ToJsonString(), timelineRoot.ToJsonString(), MatchId, ConfiguredPuuid));
+
+        Assert.All(reconstruction.MatchSummary!.ParticipantResults, value =>
+        {
+            Assert.True(value.GameEndedInSurrender!.Value);
+            Assert.Equal(0, value.NexusKills!.Value);
+            Assert.Equal(0, value.NexusTakedowns!.Value);
+            Assert.Equal(0, value.NexusLost!.Value);
+        });
+        Assert.DoesNotContain(reconstruction.Events, value => value is GameEndEvent);
+        Assert.Equal(200, reconstruction.MatchSummary.TeamResults.Single(value => value.Won.Value).TeamId);
+    }
+
+    [Fact]
+    public void MissingOptionalMatchEndFieldsRemainExplicitlyUnavailable()
+    {
+        var (match, timeline) = FixtureJson();
+        var root = JsonNode.Parse(match)!.AsObject();
+        root["info"]!.AsObject().Remove("gameEndTimestamp");
+        root["info"]!.AsObject().Remove("endOfGameResult");
+
+        var reconstruction = new GameReconstruction(_mapper.Map(root.ToJsonString(), timeline, MatchId, ConfiguredPuuid));
+
+        Assert.Null(reconstruction.MatchSummary!.GameEndTimestampMs);
+        Assert.Null(reconstruction.MatchSummary.EndOfGameResult);
+        Assert.NotEmpty(reconstruction.Events.OfType<GameEndEvent>());
+    }
+
+    [Fact]
+    public void ConflictingMatchAndTimelineOutcomesAreReportedWithoutDroppingSources()
+    {
+        var (match, timeline) = FixtureJson();
+        var root = JsonNode.Parse(match)!.AsObject();
+        root["info"]!["teams"]![0]!["win"] = true;
+        root["info"]!["teams"]![1]!["win"] = false;
+
+        var reconstruction = new GameReconstruction(_mapper.Map(root.ToJsonString(), timeline, MatchId, ConfiguredPuuid));
+
+        Assert.Contains(reconstruction.SourceDataIssues, value => value.Code == "match_outcome_conflict");
+        Assert.False(reconstruction.MatchSummary!.ParticipantResults.Single(value => value.ParticipantId == 2).Won.Value);
+        Assert.True(reconstruction.MatchSummary.TeamResults.Single(value => value.TeamId == 100).Won.Value);
+        Assert.NotEmpty(reconstruction.Events.OfType<GameEndEvent>());
+    }
+
+    [Fact]
     public void FixtureIdentityAndAbsoluteTimeAreSyntheticWhileRelativeEvidenceIsIntact()
     {
         var (matchJson, timelineJson) = FixtureJson();

@@ -1,7 +1,7 @@
-import type { CombatEvent, Encounter, MatchReview, ObjectiveEvent, Position, ReviewWindow } from "@/lib/api/pathwise";
+import type { CombatEvent, Encounter, MatchReview, ObjectiveEvent, Position, ProgressionEvent, ReviewWindow, TeamAttribution } from "@/lib/api/pathwise";
 import { projectSummonersRiftPosition } from "@/lib/maps/summoners-rift-map-v1-projection";
 
-export type EvidenceLayer = "you" | "enemy" | "combat" | "objectives";
+export type EvidenceLayer = "you" | "enemy" | "combat" | "objectives" | "progression";
 export type SpatialEvidence = {
   id: string;
   layer: EvidenceLayer;
@@ -15,14 +15,65 @@ export type SpatialEvidence = {
   eventIndex: number;
 };
 
+export function recordedPositionStatus(position: Position | null): string {
+  if (position === null) return "No recorded map location";
+  return projectSummonersRiftPosition(position) === null ? "Outside calibrated map" : "Recorded map location";
+}
+
 export function spatialEvidenceLocationStatus(entry: SpatialEvidence): string {
-  if (entry.position === null) return "No recorded map location";
-  return projectSummonersRiftPosition(entry.position) === null ? "Outside calibrated map" : "Recorded map location";
+  return recordedPositionStatus(entry.position);
 }
 
 function champion(review: MatchReview, id: number | null): string {
   if (id === null || id === 0) return "Unknown participant";
   return review.participants.find((participant) => participant.participantId === id)?.championName ?? `Participant ${id}`;
+}
+
+function configuredTeamId(review: MatchReview): number | null {
+  return review.participants.find((participant) => participant.participantId === review.configuredParticipantId)?.teamId ?? null;
+}
+
+function attributedTeamId(attribution: TeamAttribution): number | null {
+  return attribution.resolvedTeamId ?? attribution.suppliedTeamId;
+}
+
+export function teamPresentation(review: MatchReview, attribution: TeamAttribution): string {
+  const teamId = attributedTeamId(attribution);
+  if (teamId === null) return "Unknown team";
+  const playerTeam = configuredTeamId(review);
+  if (teamId === playerTeam) return "Your team";
+  if (review.participants.some((participant) => participant.teamId === teamId)) return "Enemy team";
+  return `Team ${teamId}`;
+}
+
+function laneName(laneType: string | null): string | null {
+  const names: Record<string, string> = { TOP_LANE: "top", MID_LANE: "mid", BOT_LANE: "bottom" };
+  return laneType === null ? null : names[laneType] ?? laneType.toLowerCase().replaceAll("_", " ");
+}
+
+function structureName(event: Extract<ProgressionEvent, { kind: "buildingDestroyed" }>): string {
+  const towers: Record<string, string> = {
+    OUTER_TURRET: "outer turret",
+    INNER_TURRET: "inner turret",
+    BASE_TURRET: "base turret",
+    NEXUS_TURRET: "Nexus turret",
+  };
+  const structure = event.towerType ? towers[event.towerType] ?? event.towerType.toLowerCase().replaceAll("_", " ")
+    : event.buildingType === "INHIBITOR_BUILDING" ? "inhibitor"
+      : event.buildingType === "TOWER_BUILDING" ? "turret"
+        : event.buildingType?.toLowerCase().replaceAll("_", " ") ?? "structure";
+  const lane = event.towerType === "NEXUS_TURRET" ? null : laneName(event.laneType);
+  return lane ? `${lane} ${structure}` : structure;
+}
+
+export function buildingDestroyedLabel(review: MatchReview, event: Extract<ProgressionEvent, { kind: "buildingDestroyed" }>): string {
+  const owner = teamPresentation(review, event.structureOwnerTeam);
+  const possessive = owner === "Your team" ? "Your" : owner === "Enemy team" ? "Enemy" : `${owner}'s`;
+  return `${possessive} ${structureName(event)} was destroyed`;
+}
+
+export function progressionSpatialEvidenceId(window: ReviewWindow, event: Extract<ProgressionEvent, { kind: "buildingDestroyed" }>): string {
+  return `${window.requestedStartTimestampMs}-${window.requestedEndTimestampMs}:progression:${event.source.frameIndex}:${event.source.eventIndex}`;
 }
 
 function objectiveName(event: ObjectiveEvent): string {
@@ -75,8 +126,19 @@ export function buildSpatialEvidence(review: MatchReview, window: ReviewWindow, 
   for (const event of objectiveEvents) entries.push({ id: `${windowKey}:objective:${event.source.frameIndex}:${event.source.eventIndex}`,
         layer: "objectives", timestampMs: event.timestampMs, label: `${objectiveName(event)} killed`, position: event.position,
         kind: "event", boundary: false, frameIndex: event.source.frameIndex, eventIndex: event.source.eventIndex,
-        description: `${objectiveName(event)} · Killer: ${champion(review, event.killerParticipantId)} · Attribution: ${event.teamAttribution.kind === "KnownTeam" ? `team ${event.teamAttribution.resolvedTeamId}` : event.teamAttribution.kind.toLowerCase()} · Event-reported position` });
-  const order: Record<EvidenceLayer, number> = { you: 0, enemy: 1, combat: 2, objectives: 3 };
+        description: `${objectiveName(event)} · Killer: ${champion(review, event.killerParticipantId)} · Attribution: ${teamPresentation(review, event.teamAttribution)} · Event-reported position` });
+  if (encounter === null) {
+    for (const event of window.progression.events) {
+      if (event.kind !== "buildingDestroyed") continue;
+      entries.push({
+        id: progressionSpatialEvidenceId(window, event), layer: "progression", timestampMs: event.timestampMs,
+        label: buildingDestroyedLabel(review, event), position: event.position, kind: "event", boundary: false,
+        frameIndex: event.source.frameIndex, eventIndex: event.source.eventIndex,
+        description: `${buildingDestroyedLabel(review, event)} · Killer: ${champion(review, event.killerParticipantId)} · Assists: ${event.assistingParticipantIds.length ? event.assistingParticipantIds.map((id) => champion(review, id)).join(", ") : "none"} · Event-reported position`,
+      });
+    }
+  }
+  const order: Record<EvidenceLayer, number> = { you: 0, enemy: 1, combat: 2, objectives: 3, progression: 4 };
   return entries.sort((left, right) => left.timestampMs - right.timestampMs || order[left.layer] - order[right.layer] || left.frameIndex - right.frameIndex || left.eventIndex - right.eventIndex);
 }
 
