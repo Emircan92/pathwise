@@ -14,7 +14,7 @@ The MVP is designed for personal use and will initially analyze jungle games onl
 
 ### Current implementation status
 
-Pathwise currently reconstructs stored matches, selects review-worthy periods, and presents deterministic factual observations, sourced game-knowledge annotations, recorded spatial evidence on Map V1, and grouped Combat encounters. These are separate forms of evidence and context. The overall narrative interpretation and evidence-supported alternative actions described below remain MVP goals; the current review does not generate recommendations. Jungle camp pathing inference is also not implemented.
+Pathwise currently reconstructs stored matches, selects review-worthy periods, and presents deterministic factual observations, sourced game-knowledge annotations, recorded spatial evidence on Map V1, grouped combat encounters, and progression evidence. Narrative Interpretation V1 can synthesize the deterministic evidence for one selected period on demand and must identify evidence limits. It does not generate recommendations or determine what the player should have done differently. Evidence-supported alternative actions described below remain an MVP goal. Jungle camp pathing inference is also not implemented.
 
 ---
 
@@ -412,11 +412,9 @@ Derived data must be reproducible from stored source data where practical.
 
 ## 13. AI Integration
 
-An LLM is intentionally not required for the core MVP.
+An LLM is not required for the core MVP. Narrative Interpretation V1 is an optional, on-demand layer over deterministic review evidence, and Pathwise remains fully usable when it is disabled or unconfigured.
 
-The architecture should nevertheless make future AI integration straightforward.
-
-Expected future pipeline:
+The first AI integration is intentionally narrow:
 
 ```text
 Riot API
@@ -431,14 +429,16 @@ Review windows
     ↓
 Structured observations
     ↓
-AI interpretation
+NarrativeInterpretationInputV1
+    ↓
+Optional Narrative Interpretation V1
 ```
 
-The future AI layer should consume structured analytical output rather than raw Riot responses wherever practical.
+The AI layer consumes a versioned, curated projection rather than the public review response or raw Riot payloads. Its output is validated against the exact input fingerprint and supplied evidence IDs before it is exposed.
 
 This allows deterministic facts and metrics to remain inspectable and testable.
 
-AI may later improve:
+Later AI layers may improve:
 
 * natural-language explanations,
 * tactical interpretation,

@@ -544,7 +544,7 @@ Further normalization or persistence of derived analysis should be added only wh
 
 # 13. Analysis Versioning
 
-The review response includes separate versions for reconstruction, review-window detection, factual observations, knowledge annotations, and encounters.
+The review response includes separate versions for reconstruction, review-window detection, factual observations, knowledge annotations, encounters, and progression. Narrative interpretations separately record the exact input fingerprint, upstream versions, and prompt-policy version used for generation.
 
 When analytical behavior changes materially, the version may increment.
 
@@ -576,9 +576,13 @@ Review-window detection
       └→ encounter detection
       ↓
 Combined review response → frontend evidence presentation, including Map V1
+      ↓ selected final window, on demand
+NarrativeInterpretationInputV1 → provider → validated NarrativeInterpretationV1
 ```
 
-Knowledge annotations add sourced game facts beside factual observations; encounters group recorded champion kills within final selected windows. Map V1 presents recorded positions and events on calibrated static artwork. It does not infer movement or jungle paths. Narrative interpretation and recommendations remain future work.
+Knowledge annotations add sourced game facts beside factual observations; encounters group recorded champion kills within final selected windows; progression contributes structure, Herald, item-destruction, and game-end evidence. Map V1 presents recorded positions and events on calibrated static artwork. It does not infer movement or jungle paths.
+
+Narrative Interpretation V1 is optional and on demand. The server reconstructs the authoritative review, resolves the requested final window by bounds and upstream versions, and projects only curated evidence through the Application boundary. V1 deliberately excludes periodic positions, coordinates, inferred paths, and inferred map regions. That spatial restriction is a V1 calibration boundary, not a permanent ban on a future explicitly designed spatial-evidence layer. Interpretations are not persisted.
 
 ---
 
@@ -762,35 +766,33 @@ Recommendation sophistication should grow incrementally.
 
 # 21. AI Integration Boundary
 
-AI is intentionally outside the MVP's critical path.
+AI remains outside the MVP's critical path. Narrative Interpretation V1 uses the narrow provider-neutral Application seam `INarrativeInterpretationProvider`; the first Infrastructure implementation calls the OpenAI Responses API directly through `HttpClient`.
 
-Future architecture may introduce:
-
-```text
-IAiGameInterpreter
-```
-
-Conceptually:
+The implemented flow is:
 
 ```text
-GameAnalysis
+Authoritative selected review period
     ↓
-Structured AI input
+NarrativeInterpretationInputV1 + canonical fingerprint
     ↓
-AI interpretation
+INarrativeInterpretationProvider
     ↓
-Natural-language coaching
+schema and grounding validation
+    ↓
+NarrativeInterpretationV1
 ```
 
-The AI layer should receive curated structured information such as:
+The input contains curated structured information such as:
 
 * review windows,
 * observations,
 * metrics,
 * event sequences,
-* recommendation candidates.
+* progression evidence,
+* omissions and source issues,
+* and knowledge annotations.
 
-It should not normally receive an unfiltered Riot payload.
+It does not receive unfiltered Riot payloads, account identity, or V1 spatial samples/coordinates. Every narrative claim must cite supplied evidence IDs. The prompt forbids unsupported causal, strategic, intent, cooldown, vision, communication, mechanical, movement, and coordination claims. Invalid or ungrounded output fails explicitly; there is no deterministic prose fallback masquerading as AI output.
 
 The application must remain useful if no AI provider is configured.
 
@@ -1223,11 +1225,14 @@ If yes, give it additional scrutiny before implementation.
                                   Combined Review Response
                                             ↓
                                   Frontend Map and Evidence
+                                            │
+                                 on-demand selected period
+                                            ▼
+                       Narrative Input → AI Provider → Validation
+                                            ↓
+                              Narrative Interpretation V1
 
-                       Future:
-                          │
-                          ▼
-              Narrative Interpretation and Recommendations
+                       Future: Recommendation V1
 ```
 
 The central architectural objective is simple:

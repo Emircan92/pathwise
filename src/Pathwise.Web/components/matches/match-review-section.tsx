@@ -17,10 +17,14 @@ import {
 } from "./spatial-evidence";
 import {
   getMatchReview,
+  interpretMatchReviewPeriod,
   type KnowledgeAnnotation,
   type Encounter,
   type MatchReview,
   type MetricKind,
+  type NarrativeClaim,
+  type NarrativeInterpretation,
+  type NarrativeUncertainty,
   type ObjectiveEvent,
   type Observation,
   type ProgressionEvent,
@@ -54,6 +58,11 @@ const signalLabels: Record<SignalKind, string> = {
 };
 
 const defaultLayers: Record<EvidenceLayer, boolean> = { you: true, enemy: true, combat: true, objectives: true, progression: true };
+
+type InterpretationState =
+  | { status: "loading"; interpretation: null; error: null }
+  | { status: "ready"; interpretation: NarrativeInterpretation; error: null }
+  | { status: "error"; interpretation: null; error: string };
 
 export function MatchReviewSection({ matchId, matchDurationMs }: { matchId: string; matchDurationMs?: number | null }) {
   const [attempt, setAttempt] = useState(0);
@@ -101,6 +110,7 @@ export function MatchReviewContent({ review, matchDurationMs }: { review: MatchR
   const [encounterId, setEncounterId] = useState<string | null>(orderedEncounters(initialWindow)[0]?.id ?? null);
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
   const [enabledLayers, setEnabledLayers] = useState<Record<EvidenceLayer, boolean>>(defaultLayers);
+  const [interpretations, setInterpretations] = useState<Record<string, InterpretationState>>({});
   const selectedWindow = windows[selectedIndex] ?? windows[0];
   const encounters = orderedEncounters(selectedWindow);
   const selectedEncounter = encounters.find((encounter) => encounter.id === encounterId) ?? null;
@@ -110,6 +120,8 @@ export function MatchReviewContent({ review, matchDurationMs }: { review: MatchR
     ? selectedEvidenceId
     : initialSpatialEvidence(visibleEvidence, selectedEncounter !== null);
   const activeEvidence = visibleEvidence.find((entry) => entry.id === activeEvidenceId) ?? null;
+  const selectedInterpretationKey = selectedWindow ? interpretationKey(review, selectedWindow) : null;
+  const selectedInterpretation = selectedInterpretationKey ? interpretations[selectedInterpretationKey] ?? null : null;
 
   function selectWindow(index: number) {
     const nextWindow = windows[index];
@@ -157,6 +169,25 @@ export function MatchReviewContent({ review, matchDurationMs }: { review: MatchR
     setEnabledLayers((current) => ({ ...current, [layer]: !current[layer] }));
   }
 
+  function interpretSelectedWindow() {
+    if (!selectedWindow || !selectedInterpretationKey || selectedInterpretation?.status === "loading") return;
+    const key = selectedInterpretationKey;
+    setInterpretations((current) => ({ ...current, [key]: { status: "loading", interpretation: null, error: null } }));
+    void interpretMatchReviewPeriod(review.matchId, {
+      requestedStartTimestampMs: selectedWindow.requestedStartTimestampMs,
+      requestedEndTimestampMs: selectedWindow.requestedEndTimestampMs,
+      reconstructionVersion: review.versions.reconstruction,
+      detectorVersion: review.versions.detector,
+    }).then((interpretation) => {
+      setInterpretations((current) => ({ ...current, [key]: { status: "ready", interpretation, error: null } }));
+    }).catch((cause: unknown) => {
+      setInterpretations((current) => ({
+        ...current,
+        [key]: { status: "error", interpretation: null, error: cause instanceof Error ? cause.message : "Could not interpret this review period." },
+      }));
+    });
+  }
+
   return (
     <div className="space-y-5">
       {review.enemyResolution.status !== "resolved" ? (
@@ -171,7 +202,14 @@ export function MatchReviewContent({ review, matchDurationMs }: { review: MatchR
         <article className="rounded-xl border bg-card p-4 sm:p-6">
           <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.12fr)_minmax(22rem,0.88fr)] xl:gap-8">
             <div className="min-w-0">
-              <PeriodContext window={selectedWindow} review={review} activeEvidenceId={activeEvidenceId} onSelectProgression={selectProgressionEvidence} />
+              <PeriodContext
+                window={selectedWindow}
+                review={review}
+                interpretation={selectedInterpretation}
+                activeEvidenceId={activeEvidenceId}
+                onInterpret={interpretSelectedWindow}
+                onSelectProgression={selectProgressionEvidence}
+              />
               <EncounterChapters
                 encounters={encounters}
                 review={review}
@@ -242,10 +280,12 @@ function PeriodNavigator({ windows, selectedIndex, matchDurationMs, onSelect }: 
   </nav>;
 }
 
-function PeriodContext({ window, review, activeEvidenceId, onSelectProgression }: {
+function PeriodContext({ window, review, interpretation, activeEvidenceId, onInterpret, onSelectProgression }: {
   window: ReviewWindow;
   review: MatchReview;
+  interpretation: InterpretationState | null;
   activeEvidenceId: string | null;
+  onInterpret: () => void;
   onSelectProgression: (id: string) => void;
 }) {
   const metrics = window.observations.filter(isMetricObservation);
@@ -257,6 +297,7 @@ function PeriodContext({ window, review, activeEvidenceId, onSelectProgression }
       <h3 id="period-context-heading" className="mt-1 text-xl font-semibold tabular-nums">{formatMatchTime(window.requestedStartTimestampMs)}–{formatMatchTime(window.requestedEndTimestampMs)}</h3>
       <p className="mt-1 text-sm text-muted-foreground">Selected for {selectionLabels[window.primarySelectionReason]}</p>
     </header>
+    <NarrativeInterpretationPanel state={interpretation} onInterpret={onInterpret} />
     <div className="mt-5 rounded-lg border bg-muted/15 p-4">
       <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Observed changes</h4>
       <div className="mt-3 space-y-3">
@@ -270,6 +311,72 @@ function PeriodContext({ window, review, activeEvidenceId, onSelectProgression }
     {window.progression.events.length > 0 ? <ProgressionContext events={window.progression.events} review={review} window={window} activeEvidenceId={activeEvidenceId} onSelect={onSelectProgression} /> : null}
     {review.knowledge.coverage === "available" ? <KnowledgeContext annotations={window.knowledgeAnnotations} objectives={objectives?.kind === "eliteObjectiveContext" ? objectives.events : []} patch={review.knowledge.publicPatch} /> : null}
   </section>;
+}
+
+function NarrativeInterpretationPanel({ state, onInterpret }: { state: InterpretationState | null; onInterpret: () => void }) {
+  const interpretation = state?.status === "ready" ? state.interpretation : null;
+  return <section aria-labelledby="narrative-interpretation-heading" className="mt-5 rounded-lg border border-primary/20 bg-primary/5 p-4">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h4 id="narrative-interpretation-heading" className="font-medium">Narrative interpretation</h4>
+        <p className="mt-1 text-xs text-muted-foreground">AI synthesis of Pathwise evidence. Deterministic evidence remains authoritative.</p>
+      </div>
+      {!interpretation ? <Button type="button" size="sm" variant="outline" disabled={state?.status === "loading"} onClick={onInterpret}>
+        {state?.status === "loading" ? "Interpreting…" : state?.status === "error" ? "Retry interpretation" : "Interpret this period"}
+      </Button> : null}
+    </div>
+    {state?.status === "loading" ? <p className="mt-4 text-sm text-muted-foreground" role="status">Interpreting the selected review period…</p> : null}
+    {state?.status === "error" ? <p className="mt-4 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">{state.error}</p> : null}
+    {interpretation ? <div className="mt-5 space-y-5">
+      <NarrativeClaimBlock title="Overview" claim={interpretation.overview} />
+      {interpretation.threads.length > 0 ? <div>
+        <h5 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Concurrent stories</h5>
+        <div className="mt-3 space-y-4">{interpretation.threads.map((thread, index) => <article key={`${thread.startTimestampMs}-${thread.endTimestampMs}-${index}`} className="border-l-2 border-primary/25 pl-3">
+          <h6 className="font-medium">{thread.title}</h6>
+          <p className="mt-1 text-xs tabular-nums text-muted-foreground">{formatMatchTime(thread.startTimestampMs, true)}–{formatMatchTime(thread.endTimestampMs, true)}</p>
+          <NarrativeClaimText claim={thread.summary} />
+          {thread.significantDevelopments.map((claim, claimIndex) => <NarrativeClaimText key={claimIndex} claim={claim} />)}
+        </article>)}</div>
+      </div> : null}
+      {interpretation.momentsWorthInvestigating.length > 0 ? <div>
+        <h5 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Moments worth investigating</h5>
+        <div className="mt-3 space-y-4">{interpretation.momentsWorthInvestigating.map((moment, index) => <article key={`${moment.startTimestampMs}-${moment.endTimestampMs}-${index}`} className="rounded-md border bg-background/35 p-3">
+          <h6 className="font-medium">{moment.title}</h6>
+          <p className="mt-1 text-xs tabular-nums text-muted-foreground">{formatMatchTime(moment.startTimestampMs, true)}–{formatMatchTime(moment.endTimestampMs, true)}</p>
+          <NarrativeClaimText claim={moment.whyItStandsOut} />
+          <p className="mt-2 text-sm"><span className="font-medium">Question:</span> {moment.question}</p>
+          <UncertaintyList values={moment.uncertainties} />
+        </article>)}</div>
+      </div> : null}
+      <div>
+        <h5 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Evidence limits</h5>
+        <UncertaintyList values={interpretation.uncertainties} />
+      </div>
+      <p className="text-[11px] text-muted-foreground">Generated by {interpretation.generation.model} · Prompt policy V{interpretation.promptPolicyVersion}</p>
+    </div> : null}
+  </section>;
+}
+
+function NarrativeClaimBlock({ title, claim }: { title: string; claim: NarrativeClaim }) {
+  return <div><h5 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</h5><NarrativeClaimText claim={claim} /></div>;
+}
+
+function NarrativeClaimText({ claim }: { claim: NarrativeClaim }) {
+  return <div className="mt-2">
+    <p className="text-sm leading-6">{claim.text}</p>
+    <EvidenceReferences ids={claim.evidenceIds} />
+  </div>;
+}
+
+function EvidenceReferences({ ids }: { ids: string[] }) {
+  return <div aria-label="Supporting evidence references" className="mt-2 flex flex-wrap gap-1.5">{ids.map((id) => <code key={id} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{id}</code>)}</div>;
+}
+
+function UncertaintyList({ values }: { values: NarrativeUncertainty[] }) {
+  return <ul className="mt-2 space-y-2 text-sm text-muted-foreground">{values.map((value, index) => <li key={`${value.reason}-${index}`}>
+    <p>{value.statement}</p>
+    {value.relatedEvidenceIds.length > 0 ? <EvidenceReferences ids={value.relatedEvidenceIds} /> : null}
+  </li>)}</ul>;
 }
 
 function ProgressionContext({ events, review, window, activeEvidenceId, onSelect }: {
@@ -449,6 +556,10 @@ function encounterLabel(encounter: Encounter, index: number): string {
 }
 
 function windowKey(window: ReviewWindow): string { return `${window.requestedStartTimestampMs}-${window.requestedEndTimestampMs}-${window.selectionRank}`; }
+function interpretationKey(review: MatchReview, window: ReviewWindow): string {
+  const versions = review.versions;
+  return `${window.requestedStartTimestampMs}-${window.requestedEndTimestampMs}-${versions.reconstruction}-${versions.detector}-${versions.factualObservations}-${versions.knowledgeAnnotations}-${versions.encounters}-${versions.progression}`;
+}
 function isMetricObservation(observation: Observation): observation is Extract<Observation, { kind: MetricKind }> { return observation.kind === "relativeGoldMovement" || observation.kind === "relativeXpMovement" || observation.kind === "relativeJungleCsMovement"; }
 function sameSource(left: SourceEvent, right: SourceEvent) { return left.frameIndex === right.frameIndex && left.eventIndex === right.eventIndex; }
 export function formatMatchTime(timestampMs: number, exact = false) { const floored = Math.floor(timestampMs); const totalSeconds = Math.floor(floored / 1000); const minutes = Math.floor(totalSeconds / 60); const seconds = String(totalSeconds % 60).padStart(2, "0"); return exact ? `${minutes}:${seconds}.${String(floored % 1000).padStart(3, "0")}` : `${minutes}:${seconds}`; }

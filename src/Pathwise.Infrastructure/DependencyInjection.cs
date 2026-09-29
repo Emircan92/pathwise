@@ -2,7 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Pathwise.Application.Ingestion;
+using Pathwise.Application.Interpretation;
 using Pathwise.Application.Reconstruction;
+using Pathwise.Infrastructure.Interpretation;
 using Pathwise.Infrastructure.Persistence;
 using Pathwise.Infrastructure.Reconstruction;
 using Pathwise.Infrastructure.Riot;
@@ -33,6 +35,10 @@ public static class DependencyInjection
             provider.GetRequiredService<IHttpClientFactory>().CreateClient("Riot"),
             provider.GetRequiredService<TimeProvider>(),
             provider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<RiotApiClient>>()));
+        services.Configure<NarrativeInterpretationOptions>(configuration.GetSection(NarrativeInterpretationOptions.SectionName));
+        services.AddHttpClient<OpenAiNarrativeInterpretationProvider>();
+        services.AddTransient<INarrativeInterpretationProvider>(provider =>
+            provider.GetRequiredService<OpenAiNarrativeInterpretationProvider>());
         return services;
     }
 }

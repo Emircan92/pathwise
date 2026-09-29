@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Pathwise.Api;
 using Pathwise.Application.Ingestion;
+using Pathwise.Application.Interpretation;
 using Pathwise.Application.Reconstruction;
 using Pathwise.Application.ReviewWindows;
 using Pathwise.Domain.Reconstruction;
@@ -19,6 +20,7 @@ builder.Services.AddScoped<MatchIngestionService>();
 builder.Services.AddScoped<ReconstructionService>();
 builder.Services.AddScoped<ReviewWindowService>();
 builder.Services.AddScoped<MatchReviewService>();
+builder.Services.AddScoped<NarrativeInterpretationService>();
 
 var app = builder.Build();
 app.UseExceptionHandler();
@@ -75,6 +77,52 @@ api.MapGet("/matches/{matchId}/review", async (string matchId, MatchReviewServic
         return Results.Ok(MatchReviewApiMapper.Map(review));
     }
     catch (ReconstructionRequestException ex) { return ReconstructionProblem(ex.Failure); }
+});
+
+api.MapPost("/matches/{matchId}/review/interpretation", async (
+    string matchId,
+    NarrativeInterpretationRequest request,
+    NarrativeInterpretationService service,
+    IOptions<RiotOptions> options,
+    CancellationToken ct) =>
+{
+    try
+    {
+        var interpretation = await service.InterpretAsync(
+            ToSnapshot(options.Value),
+            matchId,
+            new(request.RequestedStartTimestampMs, request.RequestedEndTimestampMs,
+                request.ReconstructionVersion, request.DetectorVersion),
+            ct);
+        return Results.Ok(interpretation);
+    }
+    catch (ReconstructionRequestException ex) { return ReconstructionProblem(ex.Failure); }
+    catch (NarrativeInterpretationRequestException ex)
+    {
+        var status = ex.Kind == NarrativeInterpretationRequestFailureKind.StaleWindow ? 409 : 422;
+        return Results.Problem(
+            title: "Narrative interpretation request is invalid.",
+            detail: ex.Message,
+            statusCode: status,
+            extensions: new Dictionary<string, object?> { ["code"] = ex.Kind == NarrativeInterpretationRequestFailureKind.StaleWindow ? "stale_review_window" : "unknown_review_window" });
+    }
+    catch (NarrativeProviderException ex)
+    {
+        var status = ex.Kind is NarrativeProviderFailureKind.Disabled or NarrativeProviderFailureKind.InvalidConfiguration ? 503 : 502;
+        return Results.Problem(
+            title: "Narrative interpretation is unavailable.",
+            detail: ex.Message,
+            statusCode: status,
+            extensions: new Dictionary<string, object?> { ["code"] = ex.Kind.ToString() });
+    }
+    catch (NarrativeOutputValidationException ex)
+    {
+        return Results.Problem(
+            title: "Narrative interpretation output was rejected.",
+            detail: ex.Message,
+            statusCode: 502,
+            extensions: new Dictionary<string, object?> { ["code"] = "invalid_narrative_output" });
+    }
 });
 
 app.Run();

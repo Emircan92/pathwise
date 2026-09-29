@@ -131,6 +131,55 @@ export type MatchReview = {
   windows: ReviewWindow[];
 };
 
+export type NarrativeClaim = { text: string; basis: "factSummary" | "crossEvidenceSynthesis"; evidenceIds: string[] };
+export type NarrativeUncertainty = {
+  statement: string;
+  reason: "notCaptured" | "missingSource" | "ambiguousAttribution" | "samplingGap" | "conflictingSources" | "outsideNarrativeScope";
+  relatedEvidenceIds: string[];
+};
+export type NarrativeThread = {
+  title: string;
+  startTimestampMs: number;
+  endTimestampMs: number;
+  summary: NarrativeClaim;
+  significantDevelopments: NarrativeClaim[];
+};
+export type NarrativeInvestigationMoment = {
+  title: string;
+  startTimestampMs: number;
+  endTimestampMs: number;
+  whyItStandsOut: NarrativeClaim;
+  question: string;
+  uncertainties: NarrativeUncertainty[];
+};
+export type NarrativeInterpretation = {
+  version: number;
+  inputFingerprint: string;
+  upstreamVersions: MatchReview["versions"];
+  promptPolicyVersion: number;
+  generation: { provider: string; model: string; generatedAtUtc: string };
+  window: {
+    requestedStartTimestampMs: number;
+    requestedEndTimestampMs: number;
+    startFrame: SourceFrame;
+    endFrame: SourceFrame;
+    primarySelectionReason: SelectionReason;
+    signalKinds: SignalKind[];
+    absorbedSignalKinds: SignalKind[];
+  };
+  overview: NarrativeClaim;
+  threads: NarrativeThread[];
+  momentsWorthInvestigating: NarrativeInvestigationMoment[];
+  uncertainties: NarrativeUncertainty[];
+};
+
+export type NarrativeInterpretationRequest = {
+  requestedStartTimestampMs: number;
+  requestedEndTimestampMs: number;
+  reconstructionVersion: number;
+  detectorVersion: number;
+};
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5100";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -146,4 +195,8 @@ export const getPlayer = () => request<Player>("/api/player");
 export const getMatches = (limit = 50, offset = 0) => request<MatchList>(`/api/matches?limit=${limit}&offset=${offset}`);
 export const getMatch = (matchId: string) => request<Match>(`/api/matches/${encodeURIComponent(matchId)}`);
 export const getMatchReview = (matchId: string, signal?: AbortSignal) => request<MatchReview>(`/api/matches/${encodeURIComponent(matchId)}/review`, { signal });
+export const interpretMatchReviewPeriod = (matchId: string, body: NarrativeInterpretationRequest, signal?: AbortSignal) => request<NarrativeInterpretation>(
+  `/api/matches/${encodeURIComponent(matchId)}/review/interpretation`,
+  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal },
+);
 export const fetchLatestMatches = () => request<FetchResult>("/api/matches/fetch", { method: "POST" });

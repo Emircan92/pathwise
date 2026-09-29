@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -9,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Pathwise.Application.Ingestion;
+using Pathwise.Application.Interpretation;
 using Pathwise.Infrastructure.Persistence;
 
 namespace Pathwise.Api.Tests;
@@ -18,10 +20,12 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
     private readonly string _databasePath = Path.Combine(Path.GetTempPath(), $"pathwise-review-api-{Guid.NewGuid():N}.db");
     private TestFactory _factory = null!;
     private HttpClient _client = null!;
+    private FakeNarrativeProvider _narrativeProvider = null!;
 
     public async Task InitializeAsync()
     {
-        _factory = new(_databasePath);
+        _narrativeProvider = new();
+        _factory = new(_databasePath, _narrativeProvider);
         _client = _factory.CreateClient();
         await using var scope = _factory.Services.CreateAsyncScope();
         var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<PathwiseDbContext>>();
@@ -203,6 +207,121 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
         Assert.Equal(before, after);
     }
 
+    [Fact]
+    public async Task InterpretsExactSelectedWindowWithServerProjectedEvidenceWithoutPersistence()
+    {
+        var before = await StoredPayloadsAsync("EUW1_1");
+
+        var response = await _client.PostAsJsonAsync("/api/matches/EUW1_1/review/interpretation", new
+        {
+            requestedStartTimestampMs = 1_421_654,
+            requestedEndTimestampMs = 1_620_500,
+            reconstructionVersion = 1,
+            detectorVersion = 2
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+        Assert.Equal(1, root.GetProperty("version").GetInt32());
+        Assert.Equal(_narrativeProvider.LastInput!.InputFingerprint, root.GetProperty("inputFingerprint").GetString());
+        Assert.Equal("A selected period was reconstructed from deterministic evidence.", root.GetProperty("overview").GetProperty("text").GetString());
+        Assert.Single(root.GetProperty("uncertainties").EnumerateArray());
+        Assert.Equal(1, _narrativeProvider.CallCount);
+        Assert.Equal((1_421_654L, 1_620_500L),
+            (_narrativeProvider.LastInput.Window.RequestedStartTimestampMs, _narrativeProvider.LastInput.Window.RequestedEndTimestampMs));
+        Assert.Equal((2, 7), (_narrativeProvider.LastInput.ConfiguredParticipantId, _narrativeProvider.LastInput.EnemyJunglerParticipantId));
+        Assert.Contains(_narrativeProvider.LastInput.Participants, value =>
+            value.ParticipantId == 2 && value.ChampionName == "Khazix" && value.TeamId == 100 && value.Relationship == "configuredPlayer");
+        Assert.Contains(_narrativeProvider.LastInput.Evidence, value => value is NarrativeMetricObservationEvidenceV1 { Id: "observation:relativeGoldMovement" });
+        Assert.Contains(_narrativeProvider.LastInput.Evidence, value => value is NarrativeCombatEventEvidenceV1);
+        Assert.Contains(_narrativeProvider.LastInput.Evidence, value => value is NarrativeObjectiveEventEvidenceV1);
+        Assert.Contains(_narrativeProvider.LastInput.Evidence, value => value is NarrativeEncounterEvidenceV1);
+        Assert.Contains(_narrativeProvider.LastInput.Evidence, value => value is NarrativeBuildingDestroyedEvidenceV1);
+        Assert.Contains(_narrativeProvider.LastInput.Evidence, value => value is NarrativeKnowledgeAnnotationEvidenceV1);
+        Assert.DoesNotContain(_narrativeProvider.LastInput.Evidence, value => value is NarrativeOutcomeEvidenceV1);
+        var projected = JsonSerializer.Serialize(_narrativeProvider.LastInput, NarrativeInterpretationJson.Options);
+        Assert.DoesNotContain("configuredPlayerPosition", projected, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("enemyJunglerPosition", projected, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"x\":", projected, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("participant-2-puuid", projected, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, await StoredPayloadsAsync("EUW1_1"));
+    }
+
+    [Fact]
+    public async Task RejectsStaleAndUnknownInterpretationWindowsBeforeCallingProvider()
+    {
+        var stale = await _client.PostAsJsonAsync("/api/matches/EUW1_1/review/interpretation", new
+        {
+            requestedStartTimestampMs = 1_421_654,
+            requestedEndTimestampMs = 1_620_500,
+            reconstructionVersion = 99,
+            detectorVersion = 2
+        });
+        var unknown = await _client.PostAsJsonAsync("/api/matches/EUW1_1/review/interpretation", new
+        {
+            requestedStartTimestampMs = 1,
+            requestedEndTimestampMs = 2,
+            reconstructionVersion = 1,
+            detectorVersion = 2
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, unknown.StatusCode);
+        Assert.Equal(0, _narrativeProvider.CallCount);
+    }
+
+    [Fact]
+    public async Task RejectsUngroundedProviderOutputWithoutReturningPartialInterpretation()
+    {
+        _narrativeProvider.ReturnUnknownEvidenceReference = true;
+
+        var response = await _client.PostAsJsonAsync("/api/matches/EUW1_1/review/interpretation", new
+        {
+            requestedStartTimestampMs = 1_421_654,
+            requestedEndTimestampMs = 1_620_500,
+            reconstructionVersion = 1,
+            detectorVersion = 2
+        });
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("invalid_narrative_output", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("A selected period was reconstructed", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TranslatesProviderFailureToUnavailableResponse()
+    {
+        _narrativeProvider.Failure = new(
+            NarrativeProviderFailureKind.RequestFailed,
+            "The narrative provider request failed.",
+            429);
+
+        var response = await _client.PostAsJsonAsync("/api/matches/EUW1_1/review/interpretation", new
+        {
+            requestedStartTimestampMs = 1_421_654,
+            requestedEndTimestampMs = 1_620_500,
+            reconstructionVersion = 1,
+            detectorVersion = 2
+        });
+
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Contains("The narrative provider request failed.", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    private async Task<string[]> StoredPayloadsAsync(string matchId)
+    {
+        await using var scope = _factory.Services.CreateAsyncScope();
+        var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<PathwiseDbContext>>();
+        await using var db = await factory.CreateDbContextAsync();
+        return await db.MatchPayloads.AsNoTracking()
+            .Where(value => value.MatchId == matchId)
+            .OrderBy(value => value.Kind)
+            .Select(value => value.RawJson!)
+            .ToArrayAsync();
+    }
+
     private static (int Frame, int Event) Source(JsonElement annotation)
     {
         var source = annotation.GetProperty("target").GetProperty("event");
@@ -232,7 +351,7 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
 
     private static string Fixture(params string[] path) => File.ReadAllText(Path.Combine([AppContext.BaseDirectory, "Fixtures", .. path]));
 
-    private sealed class TestFactory(string databasePath) : WebApplicationFactory<Program>
+    private sealed class TestFactory(string databasePath, INarrativeInterpretationProvider narrativeProvider) : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -241,6 +360,8 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
             {
                 services.RemoveAll<IDbContextFactory<PathwiseDbContext>>();
                 services.AddPooledDbContextFactory<PathwiseDbContext>(options => options.UseSqlite($"Data Source={databasePath}"));
+                services.RemoveAll<INarrativeInterpretationProvider>();
+                services.AddSingleton(narrativeProvider);
             });
             builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -249,6 +370,32 @@ public sealed class MatchReviewEndpointTests : IAsyncLifetime
                 ["Riot:Player:TagLine"] = "P02",
                 ["Riot:ApiKey"] = ""
             }));
+        }
+    }
+
+    private sealed class FakeNarrativeProvider : INarrativeInterpretationProvider
+    {
+        public int CallCount { get; private set; }
+        public NarrativeInterpretationInputV1? LastInput { get; private set; }
+        public bool ReturnUnknownEvidenceReference { get; set; }
+        public NarrativeProviderException? Failure { get; set; }
+
+        public Task<NarrativeProviderResultV1> InterpretAsync(
+            NarrativeInterpretationInputV1 input,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            LastInput = input;
+            if (Failure is not null) throw Failure;
+            var evidenceId = ReturnUnknownEvidenceReference ? "event:missing" : input.Evidence[0].Id;
+            var output = new NarrativeInterpretationModelOutputV1(
+                1,
+                input.InputFingerprint,
+                new("A selected period was reconstructed from deterministic evidence.", "factSummary", [evidenceId]),
+                [],
+                [],
+                [new("The supplied evidence does not establish why the development occurred.", "notCaptured", [evidenceId])]);
+            return Task.FromResult(new NarrativeProviderResultV1(output, "fake", "fake-model", DateTimeOffset.Parse("2026-09-29T12:00:00Z")));
         }
     }
 }

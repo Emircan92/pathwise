@@ -53,3 +53,18 @@ discovers up to 50 recent Ranked Solo/Duo matches from Riot. Previously stored
 matches are not automatically pruned to that discovery limit. The recent-match
 list shows the true `totalStored` count and loads older stored pages with
 **Load more**. SQLite data is stored under `src/Pathwise.Api/data/`.
+
+## Configure Narrative Interpretation V1
+
+Narrative interpretation is optional and disabled by default. To enable the
+on-demand selected-period action with the default OpenAI model and reasoning
+effort, store the API key and enable the feature through .NET user secrets:
+
+```powershell
+dotnet user-secrets set "NarrativeInterpretation:ApiKey" "sk-..." --project src/Pathwise.Api
+dotnet user-secrets set "NarrativeInterpretation:Enabled" "true" --project src/Pathwise.Api
+```
+
+The non-secret defaults are in `src/Pathwise.Api/appsettings.json`. Generated
+interpretations are not persisted; Pathwise remains usable when the feature is
+disabled or the provider is unavailable.

@@ -1,15 +1,23 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MatchReviewContent, MatchReviewSection, formatMatchTime } from "./match-review-section";
-import { getMatchReview, type Encounter, type MatchReview } from "@/lib/api/pathwise";
+import {
+  getMatchReview,
+  interpretMatchReviewPeriod,
+  type Encounter,
+  type MatchReview,
+  type NarrativeInterpretation,
+  type ReviewWindow,
+} from "@/lib/api/pathwise";
 import { buildSpatialEvidence } from "./spatial-evidence";
 
 vi.mock("@/lib/api/pathwise", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api/pathwise")>();
-  return { ...actual, getMatchReview: vi.fn() };
+  return { ...actual, getMatchReview: vi.fn(), interpretMatchReviewPeriod: vi.fn() };
 });
 
 const mockedGetMatchReview = vi.mocked(getMatchReview);
+const mockedInterpretMatchReviewPeriod = vi.mocked(interpretMatchReviewPeriod);
 
 afterEach(() => {
   cleanup();
@@ -17,6 +25,57 @@ afterEach(() => {
 });
 
 describe("hierarchical match review", () => {
+  it("does not request interpretation until the selected period is explicitly submitted", () => {
+    render(<MatchReviewContent review={representativeReview()} />);
+
+    expect(screen.getByRole("button", { name: "Interpret this period" })).toBeEnabled();
+    expect(mockedInterpretMatchReviewPeriod).not.toHaveBeenCalled();
+  });
+
+  it("requests the selected period, renders grounded sections, and keeps the result in period-session state", async () => {
+    const review = representativeReview();
+    mockedInterpretMatchReviewPeriod.mockResolvedValueOnce(representativeInterpretation(review.windows[0]));
+    render(<MatchReviewContent review={review} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interpret this period" }));
+    expect(screen.getByRole("button", { name: "Interpreting…" })).toBeDisabled();
+    expect(await screen.findByText("The configured player entered the period with a large gold lead.")).toBeInTheDocument();
+    expect(mockedInterpretMatchReviewPeriod).toHaveBeenCalledWith("EUW1_1", {
+      requestedStartTimestampMs: 1_421_654,
+      requestedEndTimestampMs: 1_620_500,
+      reconstructionVersion: 1,
+      detectorVersion: 2,
+    });
+    expect(screen.getByText("Concurrent combat")).toBeInTheDocument();
+    expect(screen.getByText("First recorded death")).toBeInTheDocument();
+    expect(screen.getAllByText("The evidence does not record why the death occurred.")).toHaveLength(2);
+    expect(screen.getAllByText("observation:relativeGoldMovement").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Window overview" }));
+    expect(mockedInterpretMatchReviewPeriod).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Previous review period" }));
+    expect(screen.getByRole("button", { name: "Interpret this period" })).toBeEnabled();
+    expect(mockedInterpretMatchReviewPeriod).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Next review period" }));
+    expect(screen.getByText("The configured player entered the period with a large gold lead.")).toBeInTheDocument();
+    expect(mockedInterpretMatchReviewPeriod).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows interpretation failures and retries only on request", async () => {
+    const review = representativeReview();
+    mockedInterpretMatchReviewPeriod
+      .mockRejectedValueOnce(new Error("Narrative provider is unavailable."))
+      .mockResolvedValueOnce(representativeInterpretation(review.windows[0]));
+    render(<MatchReviewContent review={review} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Interpret this period" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Narrative provider is unavailable.");
+    expect(mockedInterpretMatchReviewPeriod).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry interpretation" }));
+    expect(await screen.findByText("The configured player entered the period with a large gold lead.")).toBeInTheDocument();
+    expect(mockedInterpretMatchReviewPeriod).toHaveBeenCalledTimes(2);
+  });
+
   it("opens the detector rank-1 period while keeping periods in chronological navigation order", () => {
     render(<MatchReviewContent review={representativeReview()} matchDurationMs={1_800_000} />);
 
@@ -464,5 +523,47 @@ function representativeReview(): MatchReview {
         knowledgeAnnotations: [{ kind: "nearInitialSpawn", fact: elementalFact, target: { observationKind: null, event: null }, recordedKillTimestampMs: null }], encounters: [],
       },
     ],
+  };
+}
+
+function representativeInterpretation(window: ReviewWindow): NarrativeInterpretation {
+  const goldEvidence = "observation:relativeGoldMovement";
+  const deathEvidence = "event:24:12";
+  return {
+    version: 1,
+    inputFingerprint: "a".repeat(64),
+    upstreamVersions: { reconstruction: 1, detector: 2, factualObservations: 1, knowledgeAnnotations: 1, encounters: 1, progression: 1 },
+    promptPolicyVersion: 1,
+    generation: { provider: "openai", model: "gpt-5.6-sol", generatedAtUtc: "2026-09-29T12:00:00Z" },
+    window: {
+      requestedStartTimestampMs: window.requestedStartTimestampMs,
+      requestedEndTimestampMs: window.requestedEndTimestampMs,
+      startFrame: window.startFrame,
+      endFrame: window.endFrame,
+      primarySelectionReason: window.primarySelectionReason,
+      signalKinds: window.signalKinds,
+      absorbedSignalKinds: window.absorbedSignalKinds,
+    },
+    overview: {
+      text: "The configured player entered the period with a large gold lead.",
+      basis: "factSummary",
+      evidenceIds: [goldEvidence],
+    },
+    threads: [{
+      title: "Concurrent combat",
+      startTimestampMs: window.requestedStartTimestampMs,
+      endTimestampMs: window.requestedEndTimestampMs,
+      summary: { text: "Recorded combat occurred during the selected period.", basis: "factSummary", evidenceIds: [deathEvidence] },
+      significantDevelopments: [],
+    }],
+    momentsWorthInvestigating: [{
+      title: "First recorded death",
+      startTimestampMs: 1_425_000,
+      endTimestampMs: 1_425_000,
+      whyItStandsOut: { text: "The death occurred while the lead was changing.", basis: "crossEvidenceSynthesis", evidenceIds: [goldEvidence, deathEvidence] },
+      question: "What led to this recorded death?",
+      uncertainties: [{ statement: "The evidence does not record why the death occurred.", reason: "notCaptured", relatedEvidenceIds: [deathEvidence] }],
+    }],
+    uncertainties: [{ statement: "The evidence does not record why the death occurred.", reason: "notCaptured", relatedEvidenceIds: [deathEvidence] }],
   };
 }
